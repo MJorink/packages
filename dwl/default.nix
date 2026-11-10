@@ -3,6 +3,14 @@
 , libinput, libxkbcommon, libdrm, pixman, fcft, tllist, fontconfig, freetype
 , wlroots_0_20, configH ? ./config.h }:
 
+let
+  # Only what dwl uses: no XWayland, no X11/Wayland-nested backends (drops the
+  # Xwayland server and X libraries from the closure). Built locally, not cached.
+  wlroots = (wlroots_0_20.override { enableXWayland = false; }).overrideAttrs (old: {
+    mesonFlags = (old.mesonFlags or [ ]) ++ [ "-Dbackends=drm,libinput" ];
+  });
+in
+
 stdenv.mkDerivation {
   pname = "dwl";
   version = "0.9";
@@ -21,7 +29,7 @@ stdenv.mkDerivation {
 
   nativeBuildInputs = [ pkg-config wayland-scanner ];
   buildInputs = [
-    wlroots_0_20 wayland wayland-protocols libinput libxkbcommon libdrm
+    wlroots wayland wayland-protocols libinput libxkbcommon libdrm
     pixman fcft tllist fontconfig freetype
   ];
 

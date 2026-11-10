@@ -9,13 +9,13 @@
       pkgs = import nixpkgs { inherit system; overlays = [ self.overlays.default ]; };
     in
     {
-      # final.callPackage: new derivations. prev.callPackage: overrides of a
-      # nixpkgs package of the same name (avoids infinite recursion).
+      # Overrides of a nixpkgs package of the same name get prev.<name> passed
+      # in explicitly; otherwise callPackage would hand them the overlay result.
       overlays.default = final: prev: {
         dwl = final.callPackage ./dwl { };
         slstatus = final.callPackage ./slstatus { };
-        bemenu = prev.callPackage ./bemenu { };
-        htop = prev.callPackage ./htop { };
+        bemenu = final.callPackage ./bemenu { inherit (prev) bemenu; };
+        htop = final.callPackage ./htop { inherit (prev) htop; };
         jetbrains-mono-nl-nerd-font = final.callPackage ./jetbrains-mono-nl-nerd-font { };
         firmware-x270 = final.callPackage ./firmware-x270 { };
       };
