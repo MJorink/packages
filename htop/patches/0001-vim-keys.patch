@@ -1,0 +1,204 @@
+From: jorink <maxjorink@gmail.com>
+Date: Wed, 28 Oct 2026 22:00:00 +0000
+Subject: [PATCH] vim keys: hjkl, g/G, Ctrl+U/D/B/F everywhere
+
+Ported from KoffeinFlummi/htop-vim (last updated for htop 3.2.2) to 3.5.3,
+with one translation point instead of per-panel cases: Panel_vimKey() maps
+h/j/k/l to the arrows, g/G to Home/End and Ctrl+B/F to PgUp/PgDn, except
+while the panel takes text (cursorOn: search, filter, renaming, number
+entry). ScreenManager (main screen, setup, pickers) and InfoScreen (lsof,
+env, strace) call it before any handler sees the key. Ctrl+U/D scroll half
+a page. Keys that moved: kill k -> x, lsof l -> L, file locks x -> X, help
+h -> F1 / ?. In type-to-jump lists, h j k l g G no longer jump; in setup's
+Available Meters, `l` no longer adds to the left column (`L`, F5 still do).
+---
+diff --git a/Action.c b/Action.c
+index 60dce48..8f09286 100644
+--- a/Action.c
++++ b/Action.c
+@@ -718,7 +718,10 @@ static const struct {
+ } helpLeft[] = {
+    { .key = "      #: ",  .roInactive = false, .info = "hide/show header meters" },
+    { .key = "    Tab: ",  .roInactive = false, .info = "switch to next screen tab" },
+-   { .key = " Arrows: ",  .roInactive = false, .info = "scroll process list" },
++   { .key = "   hjkl: ",  .roInactive = false, .info = "scroll process list (or arrows)" },
++   { .key = "    g G: ",  .roInactive = false, .info = "go to first/last process" },
++   { .key = "  ^U ^D: ",  .roInactive = false, .info = "half page up/down" },
++   { .key = "  ^B ^F: ",  .roInactive = false, .info = "page up/down" },
+    { .key = " Digits: ",  .roInactive = false, .info = "incremental PID search" },
+    { .key = "   F3 /: ",  .roInactive = false, .info = "incremental name search" },
+    { .key = "   F4 \\: ", .roInactive = false, .info = "incremental name filtering" },
+@@ -747,7 +750,7 @@ static const struct {
+    { .key = "  Space: ", .roInactive = false, .info = "tag process" },
+    { .key = "      c: ", .roInactive = false, .info = "tag process and its children" },
+    { .key = "      U: ", .roInactive = false, .info = "untag all processes" },
+-   { .key = "   F9 k: ", .roInactive = true,  .info = "kill process/tagged processes" },
++   { .key = "   F9 x: ", .roInactive = true,  .info = "kill process/tagged processes" },
+    { .key = "   F7 ]: ", .roInactive = true,  .info = "higher priority (root only)" },
+    { .key = "   F8 [: ", .roInactive = true,  .info = "lower priority (+ nice)" },
+ #if (defined(HAVE_LIBHWLOC) || defined(HAVE_AFFINITY))
+@@ -758,15 +761,15 @@ static const struct {
+ #endif
+    { .key = "      e: ", .roInactive = false, .info = "show process environment" },
+    { .key = "      i: ", .roInactive = true,  .info = "set IO priority" },
+-   { .key = "      l: ", .roInactive = true,  .info = "list open files with lsof" },
+-   { .key = "      x: ", .roInactive = false, .info = "list file locks of process" },
++   { .key = "      L: ", .roInactive = true,  .info = "list open files with lsof" },
++   { .key = "      X: ", .roInactive = false, .info = "list file locks of process" },
+    { .key = "      s: ", .roInactive = true,  .info = "trace syscalls with strace" },
+    { .key = "      w: ", .roInactive = false, .info = "wrap process command in multiple lines" },
+ #ifdef SCHEDULER_SUPPORT
+    { .key = "      Y: ", .roInactive = true,  .info = "set scheduling policy" },
+ #endif
+    { .key = " F2 C S: ", .roInactive = false, .info = "setup" },
+-   { .key = " F1 h ?: ", .roInactive = false, .info = "show this help screen" },
++   { .key = "   F1 ?: ", .roInactive = false, .info = "show this help screen" },
+    { .key = "  F10 q: ", .roInactive = false, .info = "quit" },
+    { .key = NULL, .info = NULL }
+ };
+@@ -990,6 +993,7 @@ void Action_setBindings(Htop_Action* keys) {
+    keys['H'] = actionToggleUserlandThreads;
+    keys['I'] = actionInvertSortOrder;
+    keys['K'] = actionToggleKernelThreads;
++   keys['L'] = actionLsof;
+    keys['M'] = actionSortByMemory;
+    keys['N'] = actionSortByPID;
+    keys['O'] = actionToggleRunningInContainer;
+@@ -997,6 +1001,7 @@ void Action_setBindings(Htop_Action* keys) {
+    keys['S'] = actionSetup;
+    keys['T'] = actionSortByTime;
+    keys['U'] = actionUntagAll;
++   keys['X'] = actionShowLocks;
+ #ifdef SCHEDULER_SUPPORT
+    keys['Y'] = actionSetSchedPolicy;
+ #endif
+@@ -1012,9 +1017,6 @@ void Action_setBindings(Htop_Action* keys) {
+ #endif
+    keys['c'] = actionTagAllChildren;
+    keys['e'] = actionShowEnvScreen;
+-   keys['h'] = actionHelp;
+-   keys['k'] = actionKill;
+-   keys['l'] = actionLsof;
+    keys['m'] = actionToggleMergedCommand;
+    keys['p'] = actionToggleProgramPath;
+    keys['q'] = actionQuit;
+@@ -1022,7 +1024,7 @@ void Action_setBindings(Htop_Action* keys) {
+    keys['t'] = actionToggleTreeView;
+    keys['u'] = actionFilterByUser;
+    keys['w'] = actionShowCommandScreen;
+-   keys['x'] = actionShowLocks;
++   keys['x'] = actionKill;
+    keys[KEY_F(1)] = actionHelp;
+    keys[KEY_F(2)] = actionSetup;
+    keys[KEY_F(3)] = actionIncSearch;
+diff --git a/InfoScreen.c b/InfoScreen.c
+index 163c26e..26384a2 100644
+--- a/InfoScreen.c
++++ b/InfoScreen.c
+@@ -146,6 +146,7 @@ void InfoScreen_run(InfoScreen* this) {
+          continue;
+       }
+ 
++      ch = Panel_vimKey(panel, ch);
+       switch (ch) {
+          case ERR:
+             continue;
+diff --git a/MainPanel.c b/MainPanel.c
+index 638f60c..66b08a0 100644
+--- a/MainPanel.c
++++ b/MainPanel.c
+@@ -79,7 +79,8 @@ static HandlerResult MainPanel_eventHandler(Panel* super, int ch) {
+    Settings* settings = host->settings;
+    ScreenSettings* ss = settings->ss;
+ 
+-   if ((ch == KEY_UP || ch == KEY_DOWN || ch == KEY_PPAGE || ch == KEY_NPAGE) &&
++   if ((ch == KEY_UP || ch == KEY_DOWN || ch == KEY_PPAGE || ch == KEY_NPAGE ||
++        ch == KEY_CTRL('U') || ch == KEY_CTRL('D')) &&
+        host->activeTable->following != -1 && !settings->stickyFollow) {
+       host->activeTable->following = -1;
+       Panel_setSelectionColor(super, PANEL_SELECTION_FOCUS);
+diff --git a/Panel.c b/Panel.c
+index 6f97e44..559b7da 100644
+--- a/Panel.c
++++ b/Panel.c
+@@ -409,7 +409,6 @@ bool Panel_onKey(Panel* this, int key) {
+          break;
+ 
+       case KEY_LEFT:
+-      case KEY_CTRL('B'):
+          if (this->scrollH > 0) {
+             this->scrollH -= MAXIMUM(CRT_scrollHAmount, 0);
+             this->needsRedraw = true;
+@@ -417,7 +416,6 @@ bool Panel_onKey(Panel* this, int key) {
+          break;
+ 
+       case KEY_RIGHT:
+-      case KEY_CTRL('F'):
+          this->scrollH += CRT_scrollHAmount;
+          this->needsRedraw = true;
+          break;
+@@ -430,6 +428,14 @@ bool Panel_onKey(Panel* this, int key) {
+          PANEL_SCROLL(+(this->h - Panel_headerHeight(this)));
+          break;
+ 
++      case KEY_CTRL('U'):
++         PANEL_SCROLL(-(availableHeight / 2));
++         break;
++
++      case KEY_CTRL('D'):
++         PANEL_SCROLL(+(availableHeight / 2));
++         break;
++
+       case KEY_WHEELUP:
+          PANEL_SCROLL(-CRT_scrollWheelVAmount);
+          break;
+@@ -503,6 +509,24 @@ bool Panel_onKey(Panel* this, int key) {
+    return true;
+ }
+ 
++/* vim keys as the arrow/paging keys they stand for, except while the panel
++ * takes text (search, filter, renaming, number entry: cursorOn is set) */
++int Panel_vimKey(const Panel* this, int key) {
++   if (this->cursorOn)
++      return key;
++
++   switch (key) {
++      case 'h': return KEY_LEFT;
++      case 'j': return KEY_DOWN;
++      case 'k': return KEY_UP;
++      case 'l': return KEY_RIGHT;
++      case 'g': return KEY_HOME;
++      case 'G': return KEY_END;
++      case KEY_CTRL('B'): return KEY_PPAGE;
++      case KEY_CTRL('F'): return KEY_NPAGE;
++   }
++   return key;
++}
+ 
+ HandlerResult Panel_selectByTyping(Panel* this, int ch) {
+    int size = Panel_size(this);
+diff --git a/Panel.h b/Panel.h
+index d18ab4b..35f312a 100644
+--- a/Panel.h
++++ b/Panel.h
+@@ -142,6 +142,8 @@ void Panel_splice(Panel* this, Vector* from);
+ 
+ bool Panel_onKey(Panel* this, int key);
+ 
++int Panel_vimKey(const Panel* this, int key);
++
+ HandlerResult Panel_selectByTyping(Panel* this, int ch);
+ 
+ int Panel_getCh(Panel* this);
+diff --git a/ScreenManager.c b/ScreenManager.c
+index f79596c..9aae687 100644
+--- a/ScreenManager.c
++++ b/ScreenManager.c
+@@ -357,6 +357,7 @@ void ScreenManager_run(ScreenManager* this, Panel** lastFocus, int* lastKey, con
+          case KEY_ALT('K'): ch = KEY_UP; break;
+          case KEY_ALT('L'): ch = KEY_RIGHT; break;
+       }
++      ch = Panel_vimKey(panelFocus, ch);
+ 
+       redraw = true;
+       if (Panel_eventHandlerFn(panelFocus)) {

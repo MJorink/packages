@@ -1,0 +1,42 @@
+From d774e4e25c775c96fc99af3096a4dd0d8fbc5c46 Mon Sep 17 00:00:00 2001
+From: jorink <maxjorink@gmail.com>
+Date: Wed, 28 Oct 2026 16:24:19 +0000
+Subject: [PATCH 7/9] tagfollow: move the focused client to a tag and view it
+
+---
+ dwl.c | 12 ++++++++++++
+ 1 file changed, 12 insertions(+)
+
+diff --git a/dwl.c b/dwl.c
+index ce7c749..c98fa19 100644
+--- a/dwl.c
++++ b/dwl.c
+@@ -401,6 +401,7 @@ static int statusin(int fd, unsigned int mask, void *data);
+ static void swapclients(Client *a, Client *b);
+ static void swapdrop(Client *c);
+ static void tag(const Arg *arg);
++static void tagfollow(const Arg *arg);
+ static void tagmon(const Arg *arg);
+ static void tile(Monitor *m);
+ static void togglebar(const Arg *arg);
+@@ -3506,6 +3507,17 @@ tag(const Arg *arg)
+ 	drawbars();
+ }
+ 
++/* Move the focused client to a tag and view that tag */
++void
++tagfollow(const Arg *arg)
++{
++	Client *sel = focustop(selmon);
++	if (!sel || (arg->ui & TAGMASK) == 0)
++		return;
++	tag(arg);
++	view(arg);
++}
++
+ void
+ tagmon(const Arg *arg)
+ {
+-- 
+2.43.0
+

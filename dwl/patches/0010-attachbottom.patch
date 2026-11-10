@@ -1,0 +1,32 @@
+From d6c3e9d60d7d4021711c3b154253207559c0fa9a Mon Sep 17 00:00:00 2001
+From: jorink <maxjorink@gmail.com>
+Date: Wed, 28 Oct 2026 18:20:04 +0000
+Subject: [PATCH 10/11] attachbottom: new windows go to the end of the tiling
+ order
+
+dwl inserts new clients at the head of the client list, so the fair
+layout put them in the first (left) column. Append them instead: they
+open on the right, like mango's new_is_master=0.
+---
+ dwl.c | 5 +++--
+ 1 file changed, 3 insertions(+), 2 deletions(-)
+
+diff --git a/dwl.c b/dwl.c
+index cfb5744..6ad4cd5 100644
+--- a/dwl.c
++++ b/dwl.c
+@@ -2457,8 +2457,9 @@ mapnotify(struct wl_listener *listener, void *data)
+ 	c->geom.width += 2 * c->bw;
+ 	c->geom.height += 2 * c->bw;
+ 
+-	/* Insert this client into client lists. */
+-	wl_list_insert(&clients, &c->link);
++	/* Insert this client into client lists: new clients go last in the
++	 * tiling order, which the fair layout places at the right */
++	wl_list_insert(clients.prev, &c->link);
+ 	wl_list_insert(&fstack, &c->flink);
+ 
+ 	c->foreign_toplevel_handle = wlr_ext_foreign_toplevel_handle_v1_create(
+-- 
+2.43.0
+

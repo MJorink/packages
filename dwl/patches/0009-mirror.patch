@@ -1,0 +1,82 @@
+From da0cf42da4c22901fa62bf794376c5b1ff4752c6 Mon Sep 17 00:00:00 2001
+From: jorink <maxjorink@gmail.com>
+Date: Wed, 28 Oct 2026 16:33:14 +0000
+Subject: [PATCH 9/9] mirror: treat a monitor on top of another as its mirror
+
+wlr-randr can place HDMI-A-1 at the same position as eDP-1, so the scene
+shows the same area on both outputs. Without this, dwl still manages the
+second output as a separate monitor: its bar is drawn over the first
+one's and new windows can open on it.
+
+A monitor whose position is owned (in the output layout) by another
+monitor at the same position is a mirror: its clients move to the
+mirrored monitor, it is never selmon, and it has no bar.
+---
+ dwl.c | 30 +++++++++++++++++++++++++++++-
+ 1 file changed, 29 insertions(+), 1 deletion(-)
+
+diff --git a/dwl.c b/dwl.c
+index 601b90f..cfb5744 100644
+--- a/dwl.c
++++ b/dwl.c
+@@ -366,6 +366,7 @@ static void locksession(struct wl_listener *listener, void *data);
+ static void mapnotify(struct wl_listener *listener, void *data);
+ static void maximizenotify(struct wl_listener *listener, void *data);
+ static void monocle(Monitor *m);
++static Monitor *mirrorof(Monitor *m);
+ static void motionabsolute(struct wl_listener *listener, void *data);
+ static void motionnotify(uint32_t time, struct wlr_input_device *device, double sx,
+ 		double sy, double sx_unaccel, double sy_unaccel);
+@@ -2528,6 +2529,20 @@ monocle(Monitor *m)
+ 		wlr_scene_node_raise_to_top(&c->scene->node);
+ }
+ 
++/* A monitor placed at the same position as another one (wlr-randr
++ * --pos) mirrors it: the scene shows the same area on both outputs. The
++ * monitor that owns that point in the output layout (the older one) keeps
++ * the clients and the bar; returns it for the mirror, NULL otherwise. */
++Monitor *
++mirrorof(Monitor *m)
++{
++	Monitor *o;
++	if (!m->wlr_output->enabled)
++		return NULL;
++	o = xytomon(m->m.x, m->m.y);
++	return o && o != m && o->m.x == m->m.x && o->m.y == m->m.y ? o : NULL;
++}
++
+ void
+ motionabsolute(struct wl_listener *listener, void *data)
+ {
+@@ -3795,6 +3810,18 @@ updatemons(struct wl_listener *listener, void *data)
+ 		}
+ 	}
+ 
++	/* Hand the clients of mirroring monitors to the mirrored one */
++	wl_list_for_each(m, &mons, link) {
++		Monitor *o = mirrorof(m);
++		if (!o)
++			continue;
++		wl_list_for_each(c, &clients, link)
++			if (c->mon == m)
++				setmon(c, o, c->tags);
++		if (selmon == m)
++			selmon = o;
++	}
++
+ 	if (selmon && selmon->wlr_output->enabled) {
+ 		wl_list_for_each(c, &clients, link) {
+ 			if (!c->mon && client_surface(c)->mapped)
+@@ -3836,7 +3863,8 @@ updatebar(Monitor *m)
+ 	m->b.width = rw;
+ 	m->b.real_width = (int)((float)m->b.width / m->wlr_output->scale);
+ 
+-	wlr_scene_node_set_enabled(&m->scene_buffer->node, m->wlr_output->enabled ? showbar : 0);
++	wlr_scene_node_set_enabled(&m->scene_buffer->node,
++		m->wlr_output->enabled && !mirrorof(m) ? showbar : 0);
+ 
+ 	for (i = 0; i < LENGTH(m->pool); i++)
+ 		if (m->pool[i]) {
+-- 
+2.43.0
+

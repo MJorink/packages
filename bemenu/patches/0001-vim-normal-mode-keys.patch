@@ -1,0 +1,23 @@
+From: jorink <maxjorink@gmail.com>
+Date: Wed, 28 Oct 2026 21:00:00 +0000
+Subject: [PATCH] vim: Enter, arrows and Tab work in normal mode
+
+In normal mode every key with a character went to the vim handler, and
+Enter has one (\r), so it was swallowed: an item could only be picked
+after `i`. Keys that are not plain characters (BM_KEY_UNICODE) now fall
+through to the normal handling, like in insert mode.
+---
+diff --git a/lib/vim.c b/lib/vim.c
+index b61948c..f5bbcfe 100644
+--- a/lib/vim.c
++++ b/lib/vim.c
+@@ -211,6 +211,9 @@ enum bm_vim_code bm_vim_key_press(struct bm_menu *menu, enum bm_key key, uint32_
+             return BM_VIM_CONSUME;
+         }
+ 
++        // Enter, arrows, Tab etc. act as in insert mode; only characters are vim keys
++        if(key != BM_KEY_UNICODE) return BM_VIM_IGNORE;
++
+         if(unicode == 0 || unicode > 128) return BM_VIM_IGNORE;
+ 
+         if(menu->vim_last_key == 0) return vim_on_first_key(menu, unicode, item_count, items_displayed);

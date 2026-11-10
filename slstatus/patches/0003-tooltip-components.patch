@@ -1,0 +1,102 @@
+From 5d41a67e68b562d415afb929ac725a29c4287d12 Mon Sep 17 00:00:00 2001
+From: jorink <maxjorink@gmail.com>
+Date: Wed, 28 Oct 2026 18:26:31 +0000
+Subject: [PATCH 3/3] tooltip-components: battery_info, and build load_avg and
+ swap
+
+Data for dwl's bar tooltips (bar-tooltips patch):
+- battery_info: state plus time left when discharging or time to full
+  when charging, e.g. "Discharging, 2h 05m left"
+- load_avg and swap (swap_used, swap_total) are added to the build.
+---
+ Makefile             |  4 +++-
+ components/battery.c | 38 ++++++++++++++++++++++++++++++++++++++
+ slstatus.h           |  1 +
+ 3 files changed, 42 insertions(+), 1 deletion(-)
+
+diff --git a/Makefile b/Makefile
+index afedf0c..afcb3bc 100644
+--- a/Makefile
++++ b/Makefile
+@@ -10,7 +10,9 @@ COM =\
+ 	components/cat\
+ 	components/cpu\
+ 	components/datetime\
+-	components/ram
++	components/load_avg\
++	components/ram\
++	components/swap
+ 
+ all: slstatus
+ 
+diff --git a/components/battery.c b/components/battery.c
+index 990604d..0194239 100644
+--- a/components/battery.c
++++ b/components/battery.c
+@@ -19,6 +19,8 @@
+ 	#define POWER_SUPPLY_ENERGY   "/sys/class/power_supply/%s/energy_now"
+ 	#define POWER_SUPPLY_CURRENT  "/sys/class/power_supply/%s/current_now"
+ 	#define POWER_SUPPLY_POWER    "/sys/class/power_supply/%s/power_now"
++	#define POWER_SUPPLY_CHARGE_FULL "/sys/class/power_supply/%s/charge_full"
++	#define POWER_SUPPLY_ENERGY_FULL "/sys/class/power_supply/%s/energy_full"
+ 
+ 	static const char *
+ 	pick(const char *bat, const char *f1, const char *f2, char *path,
+@@ -112,6 +114,42 @@
+ 
+ 		return "";
+ 	}
++
++	/* "Discharging, 2h 05m left", "Charging, 0h 40m to full", "Full", ... */
++	const char *
++	battery_info(const char *bat)
++	{
++		uintmax_t now, full, rate;
++		double h;
++		int charging;
++		char path[PATH_MAX], state[13];
++
++		if (esnprintf(path, sizeof(path), POWER_SUPPLY_STATUS, bat) < 0)
++			return NULL;
++		if (pscanf(path, "%12[a-zA-Z ]", state) != 1)
++			return NULL;
++		charging = !strcmp(state, "Charging");
++		if (!charging && strcmp(state, "Discharging"))
++			return bprintf("%s", state);
++
++		if (!pick(bat, POWER_SUPPLY_CHARGE, POWER_SUPPLY_ENERGY, path,
++		          sizeof(path)) ||
++		    pscanf(path, "%ju", &now) != 1 ||
++		    !pick(bat, POWER_SUPPLY_CURRENT, POWER_SUPPLY_POWER, path,
++		          sizeof(path)) ||
++		    pscanf(path, "%ju", &rate) != 1 || rate == 0)
++			return bprintf("%s", state);
++		if (charging) {
++			if (!pick(bat, POWER_SUPPLY_CHARGE_FULL, POWER_SUPPLY_ENERGY_FULL,
++			          path, sizeof(path)) ||
++			    pscanf(path, "%ju", &full) != 1 || full < now)
++				return bprintf("%s", state);
++			now = full - now;
++		}
++		h = (double)now / (double)rate;
++		return bprintf("%s, %dh %02dm %s", state, (int)h,
++		               (int)((h - (int)h) * 60), charging ? "to full" : "left");
++	}
+ #elif defined(__OpenBSD__)
+ 	#include <fcntl.h>
+ 	#include <machine/apmvar.h>
+diff --git a/slstatus.h b/slstatus.h
+index 394281c..21dee23 100644
+--- a/slstatus.h
++++ b/slstatus.h
+@@ -3,6 +3,7 @@
+ /* battery */
+ const char *battery_perc(const char *);
+ const char *battery_remaining(const char *);
++const char *battery_info(const char *);
+ const char *battery_state(const char *);
+ 
+ /* cat */
+-- 
+2.43.0
+

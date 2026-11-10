@@ -1,0 +1,106 @@
+From 136da865956121a0519da698eb552557c11e0c39 Mon Sep 17 00:00:00 2001
+From: jorink <maxjorink@gmail.com>
+Date: Wed, 28 Oct 2026 16:24:18 +0000
+Subject: [PATCH 5/9] dragswap: MOD + left drag swaps tiled clients
+
+Dragging a tiled client no longer floats it: on release it swaps places
+with the tiled client under the cursor (also on another monitor), or
+moves to the monitor under the cursor. Floating clients move as before.
+---
+ dwl.c | 45 +++++++++++++++++++++++++++++++++++++++++++--
+ 1 file changed, 43 insertions(+), 2 deletions(-)
+
+diff --git a/dwl.c b/dwl.c
+index d06231c..b7fbc12 100644
+--- a/dwl.c
++++ b/dwl.c
+@@ -92,7 +92,7 @@
+ 
+ /* enums */
+ enum { SchemeNorm, SchemeSel, SchemeUrg }; /* color schemes */
+-enum { CurNormal, CurPressed, CurMove, CurResize, CurTileResize }; /* cursor */
++enum { CurNormal, CurPressed, CurMove, CurResize, CurTileResize, CurSwap }; /* cursor */
+ enum { XDGShell, LayerShell, X11 }; /* client types */
+ enum { LyrBg, LyrBottom, LyrTile, LyrFloat, LyrTop, LyrFS, LyrUnmanaged, LyrOverlay,
+ 	LyrIMPopup, LyrBlock, NUM_LAYERS }; /* scene layers */
+@@ -398,6 +398,7 @@ static void spawn(const Arg *arg);
+ static void startdrag(struct wl_listener *listener, void *data);
+ static int statusin(int fd, unsigned int mask, void *data);
+ static void swapclients(Client *a, Client *b);
++static void swapdrop(Client *c);
+ static void tag(const Arg *arg);
+ static void tagmon(const Arg *arg);
+ static void tile(Monitor *m);
+@@ -893,7 +894,9 @@ buttonpress(struct wl_listener *listener, void *data)
+ 			motionnotify(0, NULL, 0, 0, 0, 0);
+ 			/* Drop the window off on its new monitor; resized tiles stay */
+ 			selmon = xytomon(cursor->x, cursor->y);
+-			if (mode != CurTileResize)
++			if (mode == CurSwap)
++				swapdrop(grabc);
++			else if (mode != CurTileResize)
+ 				setmon(grabc, selmon, 0);
+ 			grabc = NULL;
+ 			return;
+@@ -2618,6 +2621,8 @@ motionnotify(uint32_t time, struct wlr_input_device *device, double dx, double d
+ 		resize(grabc, (struct wlr_box){.x = grabc->geom.x, .y = grabc->geom.y,
+ 			.width = (int)round(cursor->x) - grabc->geom.x, .height = (int)round(cursor->y) - grabc->geom.y}, 1);
+ 		return;
++	} else if (cursor_mode == CurSwap) {
++		return;
+ 	} else if (cursor_mode == CurTileResize) {
+ 		/* Re-tile at most ~60 times per second while dragging */
+ 		if (time - lastresize >= 16) {
+@@ -2661,6 +2666,12 @@ moveresize(const Arg *arg)
+ 	if (!grabc || client_is_unmanaged(grabc) || grabc->isfullscreen)
+ 		return;
+ 
++	if (arg->ui == CurMove && !grabc->isfloating) {
++		/* Tiled: swap with the client it is dropped on, see swapdrop() */
++		cursor_mode = CurSwap;
++		wlr_cursor_set_xcursor(cursor, cursor_mgr, "grabbing");
++		return;
++	}
+ 	if (arg->ui == CurResize && !grabc->isfloating) {
+ 		/* Tiled: change the fair layout weights, see fairresize() */
+ 		fairbegin(grabc);
+@@ -3446,6 +3457,36 @@ swapclients(Client *a, Client *b)
+ 	wl_list_insert(aprev, &b->link);
+ }
+ 
++/* End of a MOD + left drag of a tiled client: swap it with the tiled
++ * client under the cursor, also across monitors, or move it to the
++ * monitor under the cursor */
++void
++swapdrop(Client *c)
++{
++	Client *t = NULL;
++	Monitor *m;
++	uint32_t ctags;
++
++	xytonode(cursor->x, cursor->y, NULL, &t, NULL, NULL, NULL);
++	if (!t) {
++		setmon(c, selmon, 0);
++		return;
++	}
++	if (t == c || t->isfloating || t->isfullscreen || client_is_unmanaged(t))
++		return;
++	if (t->mon != c->mon) {
++		m = c->mon;
++		ctags = c->tags;
++		setmon(c, t->mon, t->tags);
++		setmon(t, m, ctags);
++	}
++	swapclients(c, t);
++	arrange(c->mon);
++	if (t->mon != c->mon)
++		arrange(t->mon);
++	focusclient(c, 1);
++}
++
+ void
+ tag(const Arg *arg)
+ {
+-- 
+2.43.0
+

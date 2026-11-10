@@ -1,0 +1,145 @@
+From cec2d3f7f52a09366beac63574610c798967caaa Mon Sep 17 00:00:00 2001
+From: jorink <maxjorink@gmail.com>
+Date: Wed, 28 Oct 2026 16:24:18 +0000
+Subject: [PATCH 4/9] focusdir, exchangeclient: directional focus and swap
+
+dirclient() picks the nearest visible client whose centre lies in the
+given direction (river's algorithm, as in dwl-patches/swapandfocusdir).
+focusdir() focuses it, exchangeclient() swaps tiling order with it.
+swapclients() also handles adjacent list entries.
+---
+ dwl.c | 75 +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+ 1 file changed, 75 insertions(+)
+
+diff --git a/dwl.c b/dwl.c
+index 4abd869..d06231c 100644
+--- a/dwl.c
++++ b/dwl.c
+@@ -335,6 +335,7 @@ static void destroylayersurfacenotify(struct wl_listener *listener, void *data);
+ static void destroylock(SessionLock *lock, int unlocked);
+ static void destroylocksurface(struct wl_listener *listener, void *data);
+ static void destroynotify(struct wl_listener *listener, void *data);
++static Client *dirclient(enum wlr_direction dir, int tiledonly);
+ static void destroypointerconstraint(struct wl_listener *listener, void *data);
+ static void destroysessionlock(struct wl_listener *listener, void *data);
+ static void destroykeyboardgroup(struct wl_listener *listener, void *data);
+@@ -344,7 +345,9 @@ static void drawbars(void);
+ static void fair(Monitor *m);
+ static void fairbegin(Client *gc);
+ static void fairresize(Client *gc, int offx, int offy);
++static void exchangeclient(const Arg *arg);
+ static void focusclient(Client *c, int lift);
++static void focusdir(const Arg *arg);
+ static void focusmon(const Arg *arg);
+ static void focusstack(const Arg *arg);
+ static Client *focustop(Monitor *m);
+@@ -394,6 +397,7 @@ static void setup(void);
+ static void spawn(const Arg *arg);
+ static void startdrag(struct wl_listener *listener, void *data);
+ static int statusin(int fd, unsigned int mask, void *data);
++static void swapclients(Client *a, Client *b);
+ static void tag(const Arg *arg);
+ static void tagmon(const Arg *arg);
+ static void tile(Monitor *m);
+@@ -1663,6 +1667,39 @@ destroykeyboardgroup(struct wl_listener *listener, void *data)
+ 	free(group);
+ }
+ 
++/* The nearest visible client whose centre lies in direction dir from the
++ * focused client's centre (the algorithm river uses) */
++Client *
++dirclient(enum wlr_direction dir, int tiledonly)
++{
++	Client *c, *sel = focustop(selmon), *best = NULL;
++	int sx, sy, dx, dy;
++	long d, bestd = LONG_MAX;
++
++	if (!sel || sel->isfullscreen || (tiledonly && sel->isfloating))
++		return NULL;
++	sx = sel->geom.x + sel->geom.width / 2;
++	sy = sel->geom.y + sel->geom.height / 2;
++
++	wl_list_for_each(c, &clients, link) {
++		if (c == sel || !VISIBLEON(c, selmon) || (tiledonly && c->isfloating))
++			continue;
++		dx = c->geom.x + c->geom.width / 2 - sx;
++		dy = c->geom.y + c->geom.height / 2 - sy;
++		if (!dx && !dy)
++			continue;
++		if (abs(dy) > abs(dx) ? dir != (dy > 0 ? WLR_DIRECTION_DOWN : WLR_DIRECTION_UP)
++				: dir != (dx > 0 ? WLR_DIRECTION_RIGHT : WLR_DIRECTION_LEFT))
++			continue;
++		d = (long)dx * dx + (long)dy * dy;
++		if (d < bestd) {
++			bestd = d;
++			best = c;
++		}
++	}
++	return best;
++}
++
+ Monitor *
+ dirtomon(enum wlr_direction dir)
+ {
+@@ -1749,6 +1786,17 @@ drawbars(void)
+  * cols = ceil(sqrt(n)); clients fill the grid column by column. The first
+  * (cols - n % cols) columns have n / cols rows, the others one row more.
+  * Every column and row has a weight that resizing changes. */
++/* Swap the focused tiled client with the tiled client in direction arg->i */
++void
++exchangeclient(const Arg *arg)
++{
++	Client *c, *sel = focustop(selmon);
++	if (!(c = dirclient(arg->i, 1)))
++		return;
++	swapclients(sel, c);
++	arrange(selmon);
++}
++
+ void
+ fair(Monitor *m)
+ {
+@@ -2070,6 +2118,15 @@ focusclient(Client *c, int lift)
+ 		focused_client = c;
+ }
+ 
++/* Focus the client (tiled or floating) in direction arg->i */
++void
++focusdir(const Arg *arg)
++{
++	Client *c;
++	if ((c = dirclient(arg->i, 0)))
++		focusclient(c, 1);
++}
++
+ void
+ focusmon(const Arg *arg)
+ {
+@@ -3371,6 +3428,24 @@ statusin(int fd, unsigned int mask, void *data)
+ 	return 0;
+ }
+ 
++/* Swap the positions of a and b in the client list (the tiling order) */
++void
++swapclients(Client *a, Client *b)
++{
++	struct wl_list *aprev = a->link.prev;
++
++	if (a == b)
++		return;
++	wl_list_remove(&a->link);
++	if (aprev == &b->link) { /* b was right before a */
++		wl_list_insert(b->link.prev, &a->link);
++		return;
++	}
++	wl_list_insert(&b->link, &a->link);
++	wl_list_remove(&b->link);
++	wl_list_insert(aprev, &b->link);
++}
++
+ void
+ tag(const Arg *arg)
+ {
+-- 
+2.43.0
+
