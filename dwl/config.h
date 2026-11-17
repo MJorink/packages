@@ -18,6 +18,14 @@ static const char *fonts[]                 = {"JetBrainsMonoNL Nerd Font Mono:si
 static const float rootcolor[]             = COLOR(0x0f0f0fff);
 /* This conforms to the xdg-protocol. Set the alpha to zero to restore the old behavior */
 static const float fullscreen_bg[]         = {0.0f, 0.0f, 0.0f, 1.0f}; /* You can also use glsl colors */
+/* rounded corners, shadows and blur, see scenefx */
+static const int corner_radius             = 8;  /* radius of the corners of window contents, 0 disables them */
+static const int corner_radius_only_floating = 0; /* 1 means only floating windows have rounded corners */
+static const int shadow_sigma              = 20; /* blur sigma and size of window shadows, 0 disables them */
+static const float shadow_color[]          = COLOR(0x00000080);
+/* blur behind translucent windows. Set num_passes to 0 to disable it */
+static const struct blur_data blur_data    = { .num_passes = 3, .radius = 5, .noise = 0.02f,
+                                               .brightness = 0.9f, .contrast = 0.9f, .saturation = 1.1f };
 /* caelus by dacctal (git.symlinx.net/daccfiles, .themes/caelus), with the
  * roles from dacctal's sway config: orange accent, near-black background */
 static uint32_t colors[][3]                = {

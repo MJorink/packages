@@ -12,6 +12,11 @@ DATADIR = $(PREFIX)/share
 WLR_INCS = `$(PKG_CONFIG) --cflags wlroots-0.20`
 WLR_LIBS = `$(PKG_CONFIG) --libs wlroots-0.20`
 
+# scenefx 0.5 (patches/0012-scenefx.patch). -isystem hides its -Wpedantic warnings; it is
+# linked before wlroots so its wlr_scene functions override wlroots' ones.
+FX_INCS = -isystem `$(PKG_CONFIG) --variable=includedir scenefx-0.5`/scenefx-0.5
+FX_LIBS = `$(PKG_CONFIG) --libs scenefx-0.5`
+
 # No XWayland: leave these empty
 XWAYLAND =
 XLIBS =

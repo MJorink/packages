@@ -1,7 +1,7 @@
 # dwl 0.9 with patches/* (applied in order), config.h and config.mk. No XWayland.
 { lib, stdenv, fetchurl, pkg-config, wayland-scanner, wayland, wayland-protocols
 , libinput, libxkbcommon, libdrm, pixman, fcft, tllist, fontconfig, freetype
-, wlroots_0_20, configH ? ./config.h }:
+, wlroots_0_20, scenefx, libGL, configH ? ./config.h }:
 
 let
   # Only what dwl uses: no XWayland, no X11/Wayland-nested backends (drops the
@@ -9,6 +9,8 @@ let
   wlroots = (wlroots_0_20.override { enableXWayland = false; }).overrideAttrs (old: {
     mesonFlags = (old.mesonFlags or [ ]) ++ [ "-Dbackends=drm,libinput" ];
   });
+  # Must use the same wlroots: it replaces wlroots' scene API in dwl's process
+  scenefx' = scenefx.override { wlroots_0_20 = wlroots; };
 in
 
 stdenv.mkDerivation {
@@ -29,8 +31,8 @@ stdenv.mkDerivation {
 
   nativeBuildInputs = [ pkg-config wayland-scanner ];
   buildInputs = [
-    wlroots wayland wayland-protocols libinput libxkbcommon libdrm
-    pixman fcft tllist fontconfig freetype
+    wlroots scenefx' wayland wayland-protocols libinput libxkbcommon libdrm
+    pixman fcft tllist fontconfig freetype libGL # GLES2 headers for scenefx
   ];
 
   # Command-line values override config.mk (PREFIX=/usr/local, CC=cc there)
@@ -42,7 +44,7 @@ stdenv.mkDerivation {
   ];
 
   meta = {
-    description = "dwm for Wayland, patched (bar, fair layout, tooltips, ...)";
+    description = "dwm for Wayland, patched (bar, fair layout, tooltips, scenefx, ...)";
     license = lib.licenses.gpl3Only;
     mainProgram = "dwl";
     platforms = lib.platforms.linux;
