@@ -26,11 +26,14 @@ static const float shadow_color[]          = COLOR(0x00000080);
 /* blur behind translucent windows. Set num_passes to 0 to disable it */
 static const struct blur_data blur_data    = { .num_passes = 3, .radius = 5, .noise = 0.02f,
                                                .brightness = 0.9f, .contrast = 0.9f, .saturation = 1.1f };
+/* liquid glass drawn by the blur behind windows, in pixels. refraction is capped at the blur size */
+static const struct glass_data glass_data  = { .thickness = 16, .refraction = 24,
+                                               .dispersion = 0.08f, .rim = 0.35f };
 /* caelus by dacctal (git.symlinx.net/daccfiles, .themes/caelus), with the
  * roles from dacctal's sway config: orange accent, near-black background */
 static uint32_t colors[][3]                = {
 	/*               fg          bg          border    */
-	[SchemeNorm] = { 0xf4decdff, 0x141514ff, 0x1e1f1eff },
+	[SchemeNorm] = { 0xf4decdff, 0x14151480, 0x1e1f1eff }, /* bg alpha shows the bar's glass */
 	[SchemeSel]  = { 0x141514ff, 0xef934dff, 0xef934dff },
 	[SchemeUrg]  = { 0x141514ff, 0xf16e65ff, 0xf16e65ff },
 };

@@ -9,8 +9,11 @@ let
   wlroots = (wlroots_0_20.override { enableXWayland = false; }).overrideAttrs (old: {
     mesonFlags = (old.mesonFlags or [ ]) ++ [ "-Dbackends=drm,libinput" ];
   });
-  # Must use the same wlroots: it replaces wlroots' scene API in dwl's process
-  scenefx' = scenefx.override { wlroots_0_20 = wlroots; };
+  # Must use the same wlroots: it replaces wlroots' scene API in dwl's process.
+  # scenefx is the packages repo's (glass patch) wrapping the nixpkgs one.
+  scenefx' = scenefx.override (prev: {
+    scenefx = prev.scenefx.override { wlroots_0_20 = wlroots; };
+  });
 in
 
 stdenv.mkDerivation {

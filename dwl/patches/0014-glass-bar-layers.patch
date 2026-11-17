@@ -1,0 +1,168 @@
+From 16f66d62fefa4b4059a6c9fe4dc619b94d281cac Mon Sep 17 00:00:00 2001
+From: Jorink
+Date: Tue, 17 Nov 2026 23:56:27 +0100
+Subject: [PATCH] liquid glass behind the bar, tooltips and layer surfaces
+
+The bar and its status tooltips get liquid glass below them, shown through
+their colours' alpha. Layer surfaces other than wallpapers (bemenu,
+notifications) get rounded glass the size of the surface.
+---
+ dwl.c | 48 ++++++++++++++++++++++++++++++++++++++++++++++++
+ 1 file changed, 48 insertions(+)
+
+diff --git a/dwl.c b/dwl.c
+index 3645adb..ebec5fd 100644
+--- a/dwl.c
++++ b/dwl.c
+@@ -206,6 +206,7 @@ typedef struct {
+ 	struct wlr_scene_tree *scene;
+ 	struct wlr_scene_tree *popups;
+ 	struct wlr_scene_layer_surface_v1 *scene_layer;
++	struct wlr_scene_blur *blur; /* NULL on the background layer */
+ 	struct wl_list link;
+ 	int mapped;
+ 	struct wlr_layer_surface_v1 *layer_surface;
+@@ -233,6 +234,7 @@ struct Monitor {
+ 	struct wlr_output *wlr_output;
+ 	struct wlr_scene_output *scene_output;
+ 	struct wlr_scene_buffer *scene_buffer; /* bar buffer */
++	struct wlr_scene_blur *barblur; /* glass behind the bar */
+ 	struct wlr_scene_rect *fullscreen_bg; /* See createmon() for info */
+ 	struct wlr_scene_optimized_blur *blur;
+ 	struct wl_listener frame;
+@@ -393,6 +395,8 @@ static void requestmonstate(struct wl_listener *listener, void *data);
+ static void resize(Client *c, struct wlr_box geo, int interact);
+ static void resizedir(const Arg *arg);
+ static void roundbuffer(struct wlr_scene_buffer *buffer, int sx, int sy, void *data);
++static void roundlayer(struct wlr_scene_buffer *buffer, int sx, int sy, void *data);
++static struct wlr_scene_blur *glassbelow(struct wlr_scene_node *node);
+ static void run(char *startup_cmd);
+ static void setcursor(struct wl_listener *listener, void *data);
+ static void setcursorshape(struct wl_listener *listener, void *data);
+@@ -507,6 +511,7 @@ static char tips[MAXSEG][128];
+ static Monitor *segmon;            /* monitor whose bar shows the status */
+ static int tipseg = -1;            /* segment whose tooltip is shown */
+ static struct wlr_scene_buffer *tooltip;
++static struct wlr_scene_blur *tooltipblur;
+ static struct wl_event_source *status_event_source;
+ 
+ static const struct wlr_buffer_impl buffer_impl = {
+@@ -1052,6 +1057,7 @@ cleanupmon(struct wl_listener *listener, void *data)
+ 	wlr_scene_node_destroy(&m->fullscreen_bg->node);
+ 	wlr_scene_node_destroy(&m->blur->node);
+ 	wlr_scene_node_destroy(&m->scene_buffer->node);
++	wlr_scene_node_destroy(&m->barblur->node);
+ 	free(m);
+ }
+ 
+@@ -1142,6 +1148,12 @@ commitlayersurfacenotify(struct wl_listener *listener, void *data)
+ 		return;
+ 	}
+ 
++	if (l->blur) {
++		wlr_scene_blur_set_size(l->blur, layer_surface->surface->current.width,
++				layer_surface->surface->current.height);
++		wlr_scene_node_for_each_buffer(&l->scene->node, roundlayer, NULL);
++	}
++
+ 	if (layer_surface == exclusive_focus
+ 			&& layer_surface->current.keyboard_interactive !=
+ 				ZWLR_LAYER_SURFACE_V1_KEYBOARD_INTERACTIVITY_EXCLUSIVE)
+@@ -1336,6 +1348,12 @@ createlayersurface(struct wl_listener *listener, void *data)
+ 	l->popups = surface->data = wlr_scene_tree_create(layer_surface->current.layer
+ 			< ZWLR_LAYER_SHELL_V1_LAYER_TOP ? layers[LyrTop] : scene_layer);
+ 	l->scene->node.data = l->popups->node.data = l;
++	if (layer_surface->pending.layer != ZWLR_LAYER_SHELL_V1_LAYER_BACKGROUND) {
++		l->blur = wlr_scene_blur_create(l->scene, 0, 0);
++		wlr_scene_node_lower_to_bottom(&l->blur->node);
++		wlr_scene_blur_set_corner_radius(l->blur, corner_radius);
++		wlr_scene_blur_set_glass(l->blur, 1);
++	}
+ 
+ 	wl_list_insert(&l->mon->layers[layer_surface->pending.layer],&l->link);
+ 	wlr_surface_send_enter(surface, layer_surface->output);
+@@ -1418,6 +1436,9 @@ createmon(struct wl_listener *listener, void *data)
+ 
+ 	m->scene_buffer = wlr_scene_buffer_create(layers[LyrBottom], NULL);
+ 	m->scene_buffer->point_accepts_input = baracceptsinput;
++	m->barblur = glassbelow(&m->scene_buffer->node);
++	/* Only the background is below the bar */
++	wlr_scene_blur_set_should_only_blur_bottom_layer(m->barblur, 1);
+ 	updatebar(m);
+ 
+ 	wl_list_insert(&mons, &m->link);
+@@ -1785,6 +1806,7 @@ drawbar(Monitor *m)
+ 	Client *c;
+ 	Buffer *buf;
+ 
++	wlr_scene_node_set_enabled(&m->barblur->node, m->scene_buffer->node.enabled);
+ 	if (!m->scene_buffer->node.enabled)
+ 		return;
+ 	if (!(buf = bufmon(m)))
+@@ -1834,6 +1856,9 @@ drawbar(Monitor *m)
+ 		m->b.real_width, m->b.real_height);
+ 	wlr_scene_node_set_position(&m->scene_buffer->node, m->m.x,
+ 		m->m.y + (topbar ? 0 : m->m.height - m->b.real_height));
++	wlr_scene_blur_set_size(m->barblur, m->b.real_width, m->b.real_height);
++	wlr_scene_node_set_position(&m->barblur->node, m->scene_buffer->node.x,
++		m->scene_buffer->node.y);
+ 	wlr_scene_buffer_set_buffer(m->scene_buffer, &buf->base);
+ 	wlr_buffer_unlock(&buf->base);
+ }
+@@ -2115,6 +2140,7 @@ drawtooltip(void)
+ 		return;
+ 	if (tipseg < 0 || !m || !tips[tipseg][0]) {
+ 		wlr_scene_node_set_enabled(&tooltip->node, 0);
++		wlr_scene_node_set_enabled(&tooltipblur->node, 0);
+ 		return;
+ 	}
+ 	scale = m->wlr_output->scale;
+@@ -2137,9 +2163,12 @@ drawtooltip(void)
+ 		: m->m.y + m->m.height - m->b.real_height - (int)(h / scale);
+ 	wlr_scene_buffer_set_dest_size(tooltip, (int)(w / scale), (int)(h / scale));
+ 	wlr_scene_node_set_position(&tooltip->node, x, y);
++	wlr_scene_blur_set_size(tooltipblur, (int)(w / scale), (int)(h / scale));
++	wlr_scene_node_set_position(&tooltipblur->node, x, y);
+ 	wlr_scene_buffer_set_buffer(tooltip, &buf->base);
+ 	wlr_buffer_drop(&buf->base); /* freed once the scene releases it */
+ 	wlr_scene_node_set_enabled(&tooltip->node, 1);
++	wlr_scene_node_set_enabled(&tooltipblur->node, 1);
+ }
+ 
+ void
+@@ -3140,6 +3169,23 @@ roundbuffer(struct wlr_scene_buffer *buffer, int sx, int sy, void *data)
+ 			bottom && right ? radius : 0, bottom && left ? radius : 0));
+ }
+ 
++void
++roundlayer(struct wlr_scene_buffer *buffer, int sx, int sy, void *data)
++{
++	/* Match the rounded glass behind layer surfaces */
++	wlr_scene_buffer_set_corner_radii(buffer, corner_radii_all(corner_radius));
++}
++
++struct wlr_scene_blur *
++glassbelow(struct wlr_scene_node *node)
++{
++	/* Liquid glass right below node, which must be translucent to show it */
++	struct wlr_scene_blur *blur = wlr_scene_blur_create(node->parent, 0, 0);
++	wlr_scene_node_place_below(&blur->node, node);
++	wlr_scene_blur_set_glass(blur, 1);
++	return blur;
++}
++
+ void
+ run(char *startup_cmd)
+ {
+@@ -3562,6 +3608,8 @@ setup(void)
+ 	drwl_init();
+ 	tooltip = wlr_scene_buffer_create(layers[LyrOverlay], NULL);
+ 	wlr_scene_node_set_enabled(&tooltip->node, 0);
++	tooltipblur = glassbelow(&tooltip->node);
++	wlr_scene_node_set_enabled(&tooltipblur->node, 0);
+ 
+ 	status_event_source = wl_event_loop_add_fd(wl_display_get_event_loop(dpy),
+ 		STDIN_FILENO, WL_EVENT_READABLE, statusin, NULL);
+-- 
+2.56.0
+

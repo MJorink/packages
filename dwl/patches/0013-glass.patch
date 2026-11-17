@@ -1,0 +1,34 @@
+From 17451413761418bb82df94832a92b4017ce7b941 Mon Sep 17 00:00:00 2001
+From: Jorink
+Date: Tue, 17 Nov 2026 23:46:21 +0100
+Subject: [PATCH] liquid glass behind windows
+
+Blur behind windows is drawn as liquid glass (scenefx with the packages
+repo's liquid glass patch), shaped by glass_data in config.h.
+---
+ dwl.c | 2 ++
+ 1 file changed, 2 insertions(+)
+
+diff --git a/dwl.c b/dwl.c
+index 58ffb41..3645adb 100644
+--- a/dwl.c
++++ b/dwl.c
+@@ -2550,6 +2550,7 @@ mapnotify(struct wl_listener *listener, void *data)
+ 	wlr_scene_node_set_position(&c->shadow->node, -shadow_sigma, -shadow_sigma);
+ 	wlr_scene_node_lower_to_bottom(&c->shadow->node);
+ 	c->blur = wlr_scene_blur_create(c->scene, 0, 0);
++	wlr_scene_blur_set_glass(c->blur, 1);
+ 	wlr_scene_node_lower_to_bottom(&c->blur->node);
+ 
+ 	/* Initialize client geometry with room for border */
+@@ -3367,6 +3368,7 @@ setup(void)
+ 	scene = wlr_scene_create();
+ 	wlr_scene_set_blur_data(scene, blur_data.num_passes, (int)blur_data.radius, blur_data.noise,
+ 			blur_data.brightness, blur_data.contrast, blur_data.saturation);
++	wlr_scene_set_glass_data(scene, glass_data);
+ 	root_bg = wlr_scene_rect_create(&scene->tree, 0, 0, rootcolor);
+ 	for (i = 0; i < NUM_LAYERS; i++)
+ 		layers[i] = wlr_scene_tree_create(&scene->tree);
+-- 
+2.56.0
+
