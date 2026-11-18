@@ -12,6 +12,7 @@ Patched and trimmed packages for the dwl desktop, as a Nix flake overlay
 | `htop` | 3.5.3 with vim keys (`hjkl`, `gG`, `^U^D^B^F`; kill is `x`, lsof `L`). |
 | `jetbrains-mono-nl-nerd-font` | 4 of the 96 font files (9 MiB). |
 | `inter-variable` | Inter (SF Pro stand-in), only the upright variable font (0.9 MiB). |
+| `apple-cursor-macos` | The macOS cursor theme of apple-cursor only (unfree), set as the default theme. |
 | `firmware-x270` | Only the firmware an X270 loads, instead of all of linux-firmware. |
 
 Every source is pinned by sha256. Patches are `git format-patch` files applied in
