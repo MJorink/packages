@@ -1,5 +1,5 @@
 {
-  description = "Patched and trimmed packages for the dwl desktop (dwl, scenefx, slstatus, bemenu, htop, font, firmware)";
+  description = "Patched and trimmed packages for the dwl desktop (dwl, scenefx, slstatus, bemenu, htop, fonts, firmware)";
 
   inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
 
@@ -18,11 +18,12 @@
         htop = final.callPackage ./htop { inherit (prev) htop; };
         scenefx = final.callPackage ./scenefx { inherit (prev) scenefx; };
         jetbrains-mono-nl-nerd-font = final.callPackage ./jetbrains-mono-nl-nerd-font { };
+        inter-variable = final.callPackage ./inter-variable { };
         firmware-x270 = final.callPackage ./firmware-x270 { };
       };
 
       packages.${system} = {
-        inherit (pkgs) dwl scenefx slstatus bemenu htop jetbrains-mono-nl-nerd-font firmware-x270;
+        inherit (pkgs) dwl scenefx slstatus bemenu htop jetbrains-mono-nl-nerd-font inter-variable firmware-x270;
       };
     };
 }

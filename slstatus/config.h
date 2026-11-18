@@ -36,7 +36,7 @@ static const struct arg args[] = {
 	{ battery_perc,   "%s%%  ",                       "BAT0" },
 	{ battery_state,  "\x1f" "%s ",                   "BAT1" },
 	{ battery_perc,   "%s%%  ",                       "BAT1" },
-	{ datetime,       "\x1f" "\U000f0954 %s ",        "%H:%M" },
+	{ datetime,       "\x1f" "%s ",                    "%a %-d %b  %H:%M" }, /* macOS: Wed 18 Nov  11:42 */
 	/* tooltips, in the same order */
 	{ cpu_freq,       "\x1e" "CPU %sHz",              NULL },
 	{ load_avg,       ", load %s",                    NULL },

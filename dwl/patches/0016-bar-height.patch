@@ -1,0 +1,40 @@
+From 5082a6af285700758c65d19294d93bee5037faa1 Mon Sep 17 00:00:00 2001
+From: Jorink
+Date: Wed, 18 Nov 2026 11:41:08 +0100
+Subject: [PATCH 16/16] bar: minimum height
+
+barheight sets the bar's minimum height (macOS menu bar: 24 px), the text
+stays centred.
+---
+ config.def.h | 1 +
+ dwl.c        | 2 +-
+ 2 files changed, 2 insertions(+), 1 deletion(-)
+
+diff --git a/config.def.h b/config.def.h
+index 44b4295..6cce552 100644
+--- a/config.def.h
++++ b/config.def.h
+@@ -11,6 +11,7 @@ static const unsigned int gappx            = 12; /* gap between tiled windows an
+ static const int resizestep                = 50; /* keyboard resize step in pixels */
+ static const unsigned int snap             = 32; /* snap pixel */
+ static const int showbar                   = 1; /* 0 means no bar */
++static const int barheight                 = 24; /* minimum bar height in pixels, before scaling */
+ static const int topbar                    = 1; /* 0 means bottom bar */
+ static const char *fonts[]                 = {"monospace:size=10"};
+ static const float rootcolor[]             = COLOR(0x000000ff);
+diff --git a/dwl.c b/dwl.c
+index 54507eb..35278f8 100644
+--- a/dwl.c
++++ b/dwl.c
+@@ -4120,7 +4120,7 @@ updatebar(Monitor *m)
+ 
+ 	m->b.scale = m->wlr_output->scale;
+ 	m->lrpad = m->drw->font->height;
+-	m->b.height = m->drw->font->height + 2;
++	m->b.height = MAX(m->drw->font->height + 2, (int)(barheight * m->wlr_output->scale));
+ 	m->b.real_height = (int)((float)m->b.height / m->wlr_output->scale);
+ }
+ 
+-- 
+2.56.0
+

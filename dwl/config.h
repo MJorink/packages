@@ -9,33 +9,36 @@
 /* appearance */
 static const int sloppyfocus               = 1;  /* focus follows mouse */
 static const int bypass_surface_visibility = 0;  /* 1 means idle inhibitors will disable idle tracking even if it's surface isn't visible  */
-static const unsigned int borderpx         = 1;  /* border pixel of windows */
+static const unsigned int borderpx         = 1;  /* border pixel of windows (macOS hairline) */
+static const unsigned int gappx            = 12; /* gap between tiled windows and around them */
 static const int resizestep                = 50; /* MOD+CTRL+hjkl resize step in pixels */
 static const unsigned int snap             = 32; /* snap pixel */
 static const int showbar                   = 1;  /* 0 means no bar */
+static const int barheight                 = 24; /* minimum bar height: macOS menu bar */
 static const int topbar                    = 1;  /* 0 means bottom bar */
-static const char *fonts[]                 = {"JetBrainsMonoNL Nerd Font Mono:size=10"};
-static const float rootcolor[]             = COLOR(0x0f0f0fff);
+/* Inter stands in for SF Pro; the Nerd Font is the fallback for the bar's icons */
+static const char *fonts[]                 = {"Inter Variable:size=10", "JetBrainsMonoNL Nerd Font Mono:size=10"};
+static const float rootcolor[]             = COLOR(0x1e1e1eff);
 /* This conforms to the xdg-protocol. Set the alpha to zero to restore the old behavior */
 static const float fullscreen_bg[]         = {0.0f, 0.0f, 0.0f, 1.0f}; /* You can also use glsl colors */
 /* rounded corners, shadows and blur, see scenefx */
-static const int corner_radius             = 8;  /* radius of the corners of window contents, 0 disables them */
+static const int corner_radius             = 12; /* radius of the corners of window contents, 0 disables them */
 static const int corner_radius_only_floating = 0; /* 1 means only floating windows have rounded corners */
-static const int shadow_sigma              = 20; /* blur sigma and size of window shadows, 0 disables them */
-static const float shadow_color[]          = COLOR(0x00000080);
+static const int shadow_sigma              = 30; /* blur sigma and size of window shadows, 0 disables them */
+static const float shadow_color[]          = COLOR(0x00000099); /* macOS: large, soft, dark */
 /* blur behind translucent windows. Set num_passes to 0 to disable it */
 static const struct blur_data blur_data    = { .num_passes = 3, .radius = 5, .noise = 0.02f,
                                                .brightness = 0.9f, .contrast = 0.9f, .saturation = 1.1f };
 /* liquid glass drawn by the blur behind windows, in pixels. refraction is capped at the blur size */
 static const struct glass_data glass_data  = { .thickness = 16, .refraction = 24,
                                                .dispersion = 0.08f, .rim = 0.35f };
-/* caelus by dacctal (git.symlinx.net/daccfiles, .themes/caelus), with the
- * roles from dacctal's sway config: orange accent, near-black background */
+/* macOS dark mode: white menu bar text on glass, the selected tag as a light
+ * highlight, hairline window borders (brighter when focused), system red */
 static uint32_t colors[][3]                = {
 	/*               fg          bg          border    */
-	[SchemeNorm] = { 0xf4decdff, 0x14151480, 0x1e1f1eff }, /* bg alpha shows the bar's glass */
-	[SchemeSel]  = { 0x141514ff, 0xef934dff, 0xef934dff },
-	[SchemeUrg]  = { 0x141514ff, 0xf16e65ff, 0xf16e65ff },
+	[SchemeNorm] = { 0xffffffff, 0x1e1e1e40, 0xffffff1a }, /* bg alpha shows the bar's glass */
+	[SchemeSel]  = { 0xffffffff, 0xffffff33, 0xffffff59 },
+	[SchemeUrg]  = { 0xffffffff, 0xff453aff, 0xff453aff },
 };
 
 /* tagging */
