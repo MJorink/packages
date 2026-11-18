@@ -102,7 +102,7 @@ static const enum libinput_config_tap_button_map button_map = LIBINPUT_CONFIG_TA
 /* commands (scripts live in ~/.local/bin, see dotfiles/) */
 static const char *termcmd[]     = { "footclient", NULL };
 static const char *filescmd[]    = { "footclient", "nnn", NULL };
-static const char *upgradecmd[]  = { "footclient", "--hold", "up", NULL };
+static const char *upgradecmd[]  = { "footclient", "--hold", "up -n", NULL };
 static const char *browsercmd[]  = { "librewolf", NULL };
 static const char *appmenucmd[]  = { "menu-apps", NULL };
 static const char *sysmenucmd[]  = { "menu-system", NULL };
