@@ -1,0 +1,175 @@
+From 04fa9d68f4dbad8ab338e5ea55a7f885c2fc6841 Mon Sep 17 00:00:00 2001
+From: Jorink
+Date: Wed, 18 Nov 2026 12:01:19 +0100
+Subject: [PATCH] animations: windows slide to new places and fade in
+
+Layout moves (tiling, swaps, keyboard resize, leaving fullscreen) slide
+the window to its new place and new windows fade in (content, shadow and
+glass), with an ease-out over animation_ms, like macOS. Sizes change at
+once (clients redraw only once), drags follow the pointer. rendermon()
+steps the animations and schedules frames only while they run.
+---
+ config.def.h |  1 +
+ dwl.c        | 90 ++++++++++++++++++++++++++++++++++++++++++++++++++--
+ 2 files changed, 88 insertions(+), 3 deletions(-)
+
+diff --git a/config.def.h b/config.def.h
+index 6cce552..dab78e1 100644
+--- a/config.def.h
++++ b/config.def.h
+@@ -12,6 +12,7 @@ static const int resizestep                = 50; /* keyboard resize step in pixe
+ static const unsigned int snap             = 32; /* snap pixel */
+ static const int showbar                   = 1; /* 0 means no bar */
+ static const int barheight                 = 24; /* minimum bar height in pixels, before scaling */
++static const int animation_ms              = 180; /* layout moves slide, new windows fade in; 0 disables */
+ static const int topbar                    = 1; /* 0 means bottom bar */
+ static const char *fonts[]                 = {"monospace:size=10"};
+ static const float rootcolor[]             = COLOR(0x000000ff);
+diff --git a/dwl.c b/dwl.c
+index 35278f8..ff05077 100644
+--- a/dwl.c
++++ b/dwl.c
+@@ -176,6 +176,10 @@ typedef struct {
+ 	int col, row;
+ 	float colper, rowper, oldcolper, oldrowper;
+ 	struct wlr_box dragbox;
++	/* animation: the scene node slides from (ax, ay) to geom and, when
++	 * fading, fades in; animstart is its start in ms, 0 when idle */
++	int ax, ay, placed, fading;
++	int64_t animstart;
+ } Client;
+ 
+ typedef struct {
+@@ -298,8 +302,12 @@ typedef struct {
+ 
+ /* function declarations */
+ static void applybounds(Client *c, struct wlr_box *bbox);
++static int animate(Client *c, int64_t now);
+ static void applyrules(Client *c);
+ static void arrange(Monitor *m);
++static void clientalpha(Client *c, float alpha);
++static int64_t nowms(void);
++static void setopacity(struct wlr_scene_buffer *buffer, int sx, int sy, void *data);
+ static void arrangelayer(Monitor *m, struct wl_list *list,
+ 		struct wlr_box *usable_area, int exclusive);
+ static void arrangelayers(Monitor *m);
+@@ -3045,6 +3053,16 @@ rendermon(struct wl_listener *listener, void *data)
+ 	 * generally at the output's refresh rate (e.g. 60Hz). */
+ 	Monitor *m = wl_container_of(listener, m, frame);
+ 	struct timespec now;
++	Client *c;
++	int64_t ms = nowms();
++	int animating = 0;
++
++	/* Step the animations on this monitor; frames stop when they end */
++	wl_list_for_each(c, &clients, link)
++		if (c->animstart && c->mon == m)
++			animating |= animate(c, ms);
++	if (animating)
++		wlr_output_schedule_frame(m->wlr_output);
+ 
+ 	if (!wlr_scene_output_needs_frame(m->scene_output)) {
+ 		return;
+@@ -3055,6 +3073,50 @@ rendermon(struct wl_listener *listener, void *data)
+ 	wlr_scene_output_send_frame_done(m->scene_output, &now);
+ }
+ 
++/* Ease-out cubic step of c's slide and fade; returns 1 while it runs */
++int
++animate(Client *c, int64_t now)
++{
++	float t = MIN(1.0f, (float)(now - c->animstart) / (float)animation_ms);
++	float e = 1.0f - (1.0f - t) * (1.0f - t) * (1.0f - t);
++
++	wlr_scene_node_set_position(&c->scene->node,
++			c->ax + (int)lroundf((float)(c->geom.x - c->ax) * e),
++			c->ay + (int)lroundf((float)(c->geom.y - c->ay) * e));
++	if (c->fading)
++		clientalpha(c, e);
++	if (t < 1.0f)
++		return 1;
++	c->animstart = c->fading = 0;
++	return 0;
++}
++
++/* Opacity of a window's content, its shadow and the glass behind it */
++void
++clientalpha(Client *c, float alpha)
++{
++	float shadow[4] = { shadow_color[0], shadow_color[1], shadow_color[2],
++		shadow_color[3] * alpha };
++
++	wlr_scene_node_for_each_buffer(&c->scene_surface->node, setopacity, &alpha);
++	wlr_scene_shadow_set_color(c->shadow, shadow);
++	wlr_scene_blur_set_alpha(c->blur, alpha);
++}
++
++int64_t
++nowms(void)
++{
++	struct timespec t;
++	clock_gettime(CLOCK_MONOTONIC, &t);
++	return (int64_t)t.tv_sec * 1000 + t.tv_nsec / 1000000;
++}
++
++void
++setopacity(struct wlr_scene_buffer *buffer, int sx, int sy, void *data)
++{
++	wlr_scene_buffer_set_opacity(buffer, *(float *)data);
++}
++
+ void
+ requestdecorationmode(struct wl_listener *listener, void *data)
+ {
+@@ -3088,7 +3150,7 @@ void
+ resize(Client *c, struct wlr_box geo, int interact)
+ {
+ 	struct wlr_box *bbox;
+-	struct wlr_box clip;
++	struct wlr_box clip, old;
+ 	int radius, outer, floating;
+ 
+ 	if (!c->mon || !client_surface(c)->mapped)
+@@ -3097,6 +3159,7 @@ resize(Client *c, struct wlr_box geo, int interact)
+ 	bbox = interact ? &sgeom : &c->mon->w;
+ 
+ 	client_set_bounds(c, geo.width, geo.height);
++	old = c->geom;
+ 	c->geom = geo;
+ 	applybounds(c, bbox);
+ 
+@@ -3105,8 +3168,29 @@ resize(Client *c, struct wlr_box geo, int interact)
+ 	floating = c->isfloating || !c->mon->lt[c->mon->sellt]->arrange;
+ 
+ 	/* Update scene-graph, including borders. The border is a rectangle with
+-	 * a hole for the content, so their rounded corners stay concentric. */
+-	wlr_scene_node_set_position(&c->scene->node, c->geom.x, c->geom.y);
++	 * a hole for the content, so their rounded corners stay concentric.
++	 * A new window fades in where it is placed, layout moves slide there
++	 * (rendermon() steps both); drags and fullscreen are immediate. */
++	if (!animation_ms || interact || c->isfullscreen) {
++		wlr_scene_node_set_position(&c->scene->node, c->geom.x, c->geom.y);
++		if (c->fading)
++			clientalpha(c, 1.0f);
++		c->animstart = c->fading = 0;
++	} else if (!c->placed) {
++		wlr_scene_node_set_position(&c->scene->node, c->geom.x, c->geom.y);
++		c->ax = c->geom.x;
++		c->ay = c->geom.y;
++		c->fading = 1;
++		c->animstart = nowms();
++		clientalpha(c, 0.0f);
++	} else if (old.x != c->geom.x || old.y != c->geom.y) {
++		c->ax = c->scene->node.x;
++		c->ay = c->scene->node.y;
++		c->animstart = nowms();
++	}
++	c->placed = 1;
++	if (c->animstart)
++		wlr_output_schedule_frame(c->mon->wlr_output);
+ 	wlr_scene_node_set_position(&c->scene_surface->node, c->bw, c->bw);
+ 	wlr_scene_rect_set_size(c->border, c->geom.width, c->geom.height);
+ 	wlr_scene_rect_set_corner_radius(c->border, outer);
+-- 
+2.56.0
+

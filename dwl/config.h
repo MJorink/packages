@@ -26,6 +26,9 @@ static const int corner_radius             = 12; /* radius of the corners of win
 static const int corner_radius_only_floating = 0; /* 1 means only floating windows have rounded corners */
 static const int shadow_sigma              = 30; /* blur sigma and size of window shadows, 0 disables them */
 static const float shadow_color[]          = COLOR(0x00000099); /* macOS: large, soft, dark */
+/* window animations in ms (macOS-quick ease-out): layout moves slide, new
+ * windows fade in. 0 disables them */
+static const int animation_ms              = 180;
 /* blur behind translucent windows. Set num_passes to 0 to disable it */
 static const struct blur_data blur_data    = { .num_passes = 3, .radius = 5, .noise = 0.02f,
                                                .brightness = 0.9f, .contrast = 0.9f, .saturation = 1.1f };

@@ -5,7 +5,7 @@ Patched and trimmed packages for the dwl desktop, as a Nix flake overlay
 
 | Package | What |
 |---|---|
-| `dwl` | dwl 0.9, `dwl/patches/*` (bar, fair layout, focusdir, dragswap, maximize, tagfollow, focusgeom, mirror, attachbottom, tooltips, scenefx, glass, gaps, bar height), `dwl/config.h`. No XWayland. |
+| `dwl` | dwl 0.9, `dwl/patches/*` (bar, fair layout, focusdir, dragswap, maximize, tagfollow, focusgeom, mirror, attachbottom, tooltips, scenefx, glass, gaps, bar height, animations), `dwl/config.h`. No XWayland. |
 | `scenefx` | 0.5 with liquid glass blur nodes (rim refraction, dispersion, highlight). |
 | `slstatus` | slstatus 1.1, no X11, battery icons, tooltip components, `slstatus/config.h`. |
 | `bemenu` | 0.6.23, Wayland renderer only, Enter works in vim normal mode. |
