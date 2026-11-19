@@ -42,11 +42,18 @@ out of the patched dwl above and keeps its tiling and keys:
   (switching tags if needed), restores a minimized one or launches the app;
   middle click opens a new one. Icons come from the apps' desktop entries and
   the icon theme (`icon_theme`), PNG or SVG.
-- **Menu bar**: transparent like Tahoe's, with the Apple logo (opens
-  `logomenucmd`), the focused app's name in bold, the occupied tags and the
-  status on the right (slstatus, with tooltips).
+- **Menu bar**: transparent like Tahoe's, with the NixOS logo where macOS has
+  the Apple menu (opens `logomenucmd`; Tux is `\uf31a`), the focused app's name
+  in bold, the occupied tags and the status on the right (slstatus, with tooltips).
 - **Windows**: 16 px corners, a hairline border, a large soft shadow under the
-  focused window and a lighter one under the others, fade-in and slide animations.
+  focused window and a lighter one under the others.
+- **Animations** (`anim.h`, durations in `config.h`): minimizing pours the
+  window into its dock icon with the genie effect, and restoring pours it back
+  out; new windows zoom in from the middle and fade in, closed ones shrink and
+  fade out; switching tags slides like switching spaces (`MOD+SHIFT+n` takes
+  the window along while the rest slides); layout moves use a spring. The
+  genie draws the window as 48 strips, each squeezed onto a funnel towards the
+  icon; the gap the window leaves in the layout closes when it has arrived.
 - **Wallpaper**: `wallpaper` in `config.h` (PNG/JPEG, scaled to cover), or a
   built-in gradient in macOS colours. No swaybg needed.
 - **Tiling**: mangowm's fair layout, vim keys: `MOD+hjkl` focus,
@@ -57,6 +64,6 @@ Light: one 270 KB binary on wlroots and scenefx, no XWayland, no toolkit.
 Status input is the same as dwl's: `slstatus -s | glasswm -s <startup>`.
 
 Under the hood it is dwl's single-file design: `glasswm.c` (dwl 0.9 with the
-patches above applied), `deco.h` (title bars), `dock.h`, `icons.h` (desktop
+patches above applied), `deco.h` (title bars), `dock.h`, `anim.h`, `icons.h` (desktop
 entries, icon themes), `images.c` (stb_image and nanosvg, fetched pinned by
 `default.nix`).

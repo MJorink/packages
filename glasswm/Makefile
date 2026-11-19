@@ -15,7 +15,7 @@ PKGS    = wayland-server xkbcommon libinput pixman-1 fcft
 CFLAGS_ = `$(PKG_CONFIG) --cflags $(PKGS)` $(WLR_INCS) $(FX_INCS) $(CPPFLAGS_) $(DEVCFLAGS) $(CFLAGS)
 LDLIBS  = `$(PKG_CONFIG) --libs $(PKGS)` $(FX_LIBS) $(WLR_LIBS) -lm $(LIBS)
 
-HDRS = client.h config.h deco.h dock.h drwl.h icons.h ime.h images.c util.h
+HDRS = anim.h client.h config.h deco.h dock.h drwl.h icons.h ime.h images.c util.h
 PROTO = cursor-shape-v1-protocol.h ext-image-copy-capture-v1-protocol.h \
 	pointer-constraints-unstable-v1-protocol.h wlr-layer-shell-unstable-v1-protocol.h \
 	wlr-output-power-management-unstable-v1-protocol.h xdg-shell-protocol.h

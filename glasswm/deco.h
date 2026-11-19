@@ -365,31 +365,6 @@ decohover(Client *c, int part)
 		decoupdate(hoverc);
 }
 
-static void
-minimize(Client *c)
-{
-	if (!c || c->isminimized)
-		return;
-	c->isminimized = 1;
-	if (c == hoverc)
-		hoverc = NULL;
-	focusclient(focustop(c->mon), 1);
-	arrange(c->mon);
-	dockchanged();
-}
-
-static void
-unminimize(Client *c)
-{
-	if (!c || !c->isminimized)
-		return;
-	c->isminimized = 0;
-	c->placed = 0; /* fade in again */
-	focusclient(c, 1);
-	arrange(c->mon);
-	dockchanged();
-}
-
 /* Toggle filling the window area, for c (togglemaximize() acts on the focused window) */
 static void
 zoomclient(Client *c)

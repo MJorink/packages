@@ -241,7 +241,7 @@ drwl_text(Drwl *drwl,
 			fcft_kerning(drwl->font, last_cp, cp, &x_kern, NULL);
 		last_cp = cp;
 
-		ty = y + (h - drwl->font->height) / 2 + drwl->font->ascent;
+		ty = y + ((int)h - drwl->font->height) / 2 + drwl->font->ascent;
 
 		if (render && !noellipsis && x_kern + glyph->advance.x + eg->advance.x > w &&
 		    *(p + 1) != '\0') {

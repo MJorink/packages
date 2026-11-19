@@ -22,11 +22,11 @@ static const int showbar                   = 1;  /* 0 means no menu bar */
 static const int barheight                 = 24; /* macOS menu bar height */
 static const int topbar                    = 1;  /* 0 means bottom bar */
 /* Inter stands in for SF Pro (13 px at size=10); the Nerd Font has the
- * status icons and the Apple logo */
+ * status icons and the NixOS logo */
 static const char *fonts[]                 = {"Inter Variable:size=10", "JetBrainsMonoNL Nerd Font Mono:size=10"};
 static const char *boldfonts[]             = {"Inter Variable:size=10:weight=bold", "JetBrainsMonoNL Nerd Font Mono:size=10"};
 static const char *titlefonts[]            = {"Inter Variable:size=10:weight=bold", "JetBrainsMonoNL Nerd Font Mono:size=10"};
-static const char *logofonts[]             = {"JetBrainsMonoNL Nerd Font Mono:size=13"};
+static const char *logofonts[]             = {"JetBrainsMonoNL Nerd Font Mono:size=21"};
 static const float rootcolor[]             = COLOR(0x1e1e1eff);
 /* This conforms to the xdg-protocol. Set the alpha to zero to restore the old behavior */
 static const float fullscreen_bg[]         = {0.0f, 0.0f, 0.0f, 1.0f}; /* You can also use glsl colors */
@@ -36,7 +36,7 @@ static const char *wallpaper               = NULL;
 
 /* menu bar (macOS Tahoe: transparent over the wallpaper, white text with a
  * soft shadow). The logo opens logomenucmd, like the Apple menu. */
-static const char *menubar_logo            = ""; /* Nerd Font: Apple logo */
+static const char *menubar_logo            = "\uf313"; /* Nerd Font: NixOS snowflake (Tux: "\uf31a") */
 static const int menubar_glass             = 0;  /* 1: glass behind the menu bar */
 static const int menubar_padding           = 16; /* left and right of its contents */
 static const int menubar_spacing           = 20; /* between logo, app name and tags */
@@ -62,9 +62,12 @@ static const int shadow_sigma_unfocused    = 24;
 static const int shadow_dy                 = 12; /* downwards offset */
 static const float shadow_color[]          = COLOR(0x0000008c);
 static const float shadow_alpha_unfocused  = 0.4f;
-/* window animations in ms (macOS-quick ease-out): layout moves slide, new
- * windows fade in. 0 disables them */
-static const int animation_ms              = 180;
+/* animations in ms, 0 disables one. Moves use a spring like macOS'. */
+static const int animation_ms              = 260; /* windows moving to new places in the layout */
+static const int open_ms                   = 240; /* new windows zoom in and fade in */
+static const int close_ms                  = 160; /* closed windows shrink and fade out */
+static const int genie_ms                  = 520; /* minimize into the dock and back */
+static const int slide_ms                  = 420; /* switching tags slides like spaces */
 /* blur behind translucent windows, the dock and popups. Set num_passes to 0 to disable it */
 static const struct blur_data blur_data    = { .num_passes = 3, .radius = 6, .noise = 0.02f,
                                                .brightness = 0.95f, .contrast = 0.95f, .saturation = 1.25f };

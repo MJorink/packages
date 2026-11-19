@@ -86,6 +86,10 @@
 /* macros */
 #define CLEANMASK(mask)         (mask & ~WLR_MODIFIER_CAPS)
 #define VISIBLEON(C, M)         ((M) && (C)->mon == (M) && ((C)->tags & (M)->tagset[(M)->seltags]) && !(C)->isminimized)
+/* in the fair layout: visible, or minimizing (its cell stays until the genie ends) */
+#define TILEDON(C, M)           ((VISIBLEON(C, M) || ((C)->isminimized && (C)->anim && (M) \
+                                 && (C)->mon == (M) && ((C)->tags & (M)->tagset[(M)->seltags]))) \
+                                 && !(C)->isfloating)
 /* the client's surface inside its border and title bar, client-relative */
 #define CONTENTX(C)             ((int)(C)->bw)
 #define CONTENTY(C)             ((int)(C)->bw + (C)->th)
@@ -178,10 +182,12 @@ typedef struct {
 	int col, row;
 	float colper, rowper, oldcolper, oldrowper;
 	struct wlr_box dragbox;
-	/* animation: the scene node slides from (ax, ay) to geom and, when
-	 * fading, fades in; animstart is its start in ms, 0 when idle */
-	int ax, ay, placed, fading;
+	/* layout moves: the scene node slides from (ax, ay) to geom;
+	 * animstart is its start in ms, 0 when idle */
+	int ax, ay, placed;
 	float alpha; /* of the fade-in, 1 when shown */
+	struct Anim *anim; /* anim.h: hidden while it draws the window */
+	int slideout; /* leaving the screen in a space slide */
 	int64_t animstart;
 } Client;
 
@@ -278,6 +284,11 @@ struct Monitor {
 	int logox[2], tagx[9][2]; /* menu bar parts, in bar buffer px */
 	struct Dock *dock;
 	struct wlr_scene_buffer *wallpaper;
+	/* space slide between tags: start (0 when idle), direction, a window
+	 * that stays (moved along with MOD+SHIFT+n) */
+	int64_t slidestart;
+	int slidedir;
+	Client *slidepin;
 };
 
 typedef struct {
@@ -411,6 +422,10 @@ static void minimizesel(const Arg *arg);
 static void grabclient(Client *c, unsigned int mode);
 static void shadowupdate(Client *c);
 static void dockchanged(void);
+static void minimize(Client *c);
+static void unminimize(Client *c);
+static void placenode(Client *c, int x, int y);
+static int slidestep(Monitor *m, int64_t now);
 static void outputmgrapply(struct wl_listener *listener, void *data);
 static void outputmgrapplyortest(struct wlr_output_configuration_v1 *config, int test);
 static void outputmgrtest(struct wl_listener *listener, void *data);
@@ -602,6 +617,7 @@ static struct wl_listener new_foreign_toplevel_capture_request = {.notify = capt
 #include "deco.h"
 #include "icons.h"
 #include "dock.h"
+#include "anim.h"
 
 /* function implementations */
 void
@@ -674,7 +690,7 @@ arrange(Monitor *m)
 
 	wl_list_for_each(c, &clients, link) {
 		if (c->mon == m) {
-			wlr_scene_node_set_enabled(&c->scene->node, VISIBLEON(c, m));
+			showclient(c);
 			client_set_suspended(c, !VISIBLEON(c, m)
 					&& (!c->image_capture_source
 					|| wl_list_empty(&c->image_capture_source->resources)));
@@ -1077,6 +1093,12 @@ cleanupmon(struct wl_listener *listener, void *data)
 	wlr_scene_output_destroy(m->scene_output);
 
 	closemon(m);
+	{
+		Anim *a, *atmp;
+		wl_list_for_each_safe(a, atmp, &anims, link)
+			if (a->m == m)
+				animend(a);
+	}
 	wlr_scene_node_destroy(&m->fullscreen_bg->node);
 	wlr_scene_node_destroy(&m->blur->node);
 	wlr_scene_node_destroy(&m->scene_buffer->node);
@@ -2057,7 +2079,7 @@ fair(Monitor *m)
 	Client *c, **v;
 
 	wl_list_for_each(c, &clients, link)
-		if (VISIBLEON(c, m) && !c->isfloating)
+		if (TILEDON(c, m))
 			n++;
 	if (n == 0)
 		return;
@@ -2083,7 +2105,7 @@ fair(Monitor *m)
 
 	i = 0;
 	wl_list_for_each(c, &clients, link)
-		if (VISIBLEON(c, m) && !c->isfloating && i < n)
+		if (TILEDON(c, m) && i < n)
 			v[i++] = c;
 
 #define CELL(i, ci, ri) do { \
@@ -3258,6 +3280,8 @@ rendermon(struct wl_listener *listener, void *data)
 	wl_list_for_each(c, &clients, link)
 		if (c->animstart && c->mon == m)
 			animating |= animate(c, ms);
+	animating |= slidestep(m, ms);
+	animating |= animstep(m, ms);
 	if (animating)
 		wlr_output_schedule_frame(m->wlr_output);
 
@@ -3270,22 +3294,87 @@ rendermon(struct wl_listener *listener, void *data)
 	wlr_scene_output_send_frame_done(m->scene_output, &now);
 }
 
-/* Ease-out cubic step of c's slide and fade; returns 1 while it runs */
+/* Spring step of c's move to its place in the layout; returns 1 while it runs */
 int
 animate(Client *c, int64_t now)
 {
 	float t = MIN(1.0f, (float)(now - c->animstart) / (float)animation_ms);
-	float e = 1.0f - (1.0f - t) * (1.0f - t) * (1.0f - t);
+	float e = spring(t);
 
-	wlr_scene_node_set_position(&c->scene->node,
-			c->ax + (int)lroundf((float)(c->geom.x - c->ax) * e),
+	placenode(c, c->ax + (int)lroundf((float)(c->geom.x - c->ax) * e),
 			c->ay + (int)lroundf((float)(c->geom.y - c->ay) * e));
-	if (c->fading)
-		clientalpha(c, e);
 	if (t < 1.0f)
 		return 1;
-	c->animstart = c->fading = 0;
+	c->animstart = 0;
 	return 0;
+}
+
+/* Put c's scene node at x, y, shifted by the space slide of its monitor:
+ * the windows of the old tags leave to one side, the new ones come in
+ * from the other */
+void
+placenode(Client *c, int x, int y)
+{
+	Monitor *m = c->mon;
+	if (m && m->slidestart && c != m->slidepin) {
+		float e = spring(MIN(1.0f, (float)(nowms() - m->slidestart) / (float)slide_ms));
+		float w = (float)(m->m.width + (int)gappx);
+		x += (int)lroundf(c->slideout ? -(float)m->slidedir * w * e
+				: (float)m->slidedir * w * (1.0f - e));
+	}
+	wlr_scene_node_set_position(&c->scene->node, x, y);
+}
+
+static void
+slideend(Monitor *m)
+{
+	Client *c;
+	m->slidestart = 0;
+	m->slidepin = NULL;
+	wl_list_for_each(c, &clients, link) {
+		if (c->mon != m)
+			continue;
+		c->slideout = 0;
+		showclient(c);
+		if (!c->animstart)
+			placenode(c, c->geom.x, c->geom.y);
+	}
+}
+
+/* Step m's space slide; returns 1 while it runs */
+int
+slidestep(Monitor *m, int64_t now)
+{
+	Client *c;
+	if (!m->slidestart)
+		return 0;
+	if (now - m->slidestart >= slide_ms) {
+		slideend(m);
+		return 0;
+	}
+	wl_list_for_each(c, &clients, link)
+		if (c->mon == m && (c->slideout || VISIBLEON(c, m)) && !c->animstart)
+			placenode(c, c->geom.x, c->geom.y);
+	return 1;
+}
+
+/* Slide from tags old to tags new on m, like switching spaces on macOS:
+ * to the right for a higher tag. Call before arrange(). */
+static void
+slidetags(Monitor *m, uint32_t old, uint32_t new)
+{
+	Client *c;
+	if (!slide_ms || !m || old == new)
+		return;
+	if (m->slidestart)
+		slideend(m);
+	m->slidedir = __builtin_ctz(new) > __builtin_ctz(old) ? 1 : -1;
+	wl_list_for_each(c, &clients, link)
+		if (c->mon == m && (c->tags & old) && !(c->tags & new) && !c->isminimized
+				&& c != m->slidepin && !client_is_unmanaged(c))
+			c->slideout = 1;
+	m->slidestart = nowms();
+	wlr_output_schedule_frame(m->wlr_output);
 }
 
 /* Opacity of a window's content, title bar, shadow and the glass behind it */
@@ -3390,24 +3479,19 @@ resize(Client *c, struct wlr_box geo, int interact)
 
 	/* Update scene-graph, including borders. The border is a rectangle with
 	 * a hole for the content, so their rounded corners stay concentric.
-	 * A new window fades in where it is placed, layout moves slide there
-	 * (rendermon() steps both); drags and fullscreen are immediate. A hidden
-	 * window (setmon() places a new one before arrange() shows it) is not
-	 * placed yet: it fades in at its first place on screen. */
+	 * A new window zooms in where it is placed (anim.h), layout moves
+	 * slide there (rendermon() steps both); drags and fullscreen are
+	 * immediate. A hidden window (setmon() places a new one before arrange()
+	 * shows it) is not placed yet: it zooms in at its first place on screen. */
 	if (!c->scene->node.enabled) {
 		wlr_scene_node_set_position(&c->scene->node, c->geom.x, c->geom.y);
 	} else if (!animation_ms || interact || c->isfullscreen) {
-		wlr_scene_node_set_position(&c->scene->node, c->geom.x, c->geom.y);
-		if (c->fading)
-			clientalpha(c, 1.0f);
-		c->animstart = c->fading = 0;
+		placenode(c, c->geom.x, c->geom.y);
+		c->animstart = 0;
 	} else if (!c->placed) {
-		wlr_scene_node_set_position(&c->scene->node, c->geom.x, c->geom.y);
-		c->ax = c->geom.x;
-		c->ay = c->geom.y;
-		c->fading = 1;
-		c->animstart = nowms();
-		clientalpha(c, 0.0f);
+		placenode(c, c->geom.x, c->geom.y);
+		c->placed = 1;
+		animopen(c);
 	} else if (old.x != c->geom.x || old.y != c->geom.y) {
 		c->ax = c->scene->node.x;
 		c->ay = c->scene->node.y;
@@ -4073,8 +4157,11 @@ tagfollow(const Arg *arg)
 	Client *sel = focustop(selmon);
 	if (!sel || (arg->ui & TAGMASK) == 0)
 		return;
+	selmon->slidepin = sel; /* it stays put while the spaces slide */
 	tag(arg);
 	view(arg);
+	if (!selmon->slidestart)
+		selmon->slidepin = NULL;
 }
 
 void
@@ -4222,6 +4309,12 @@ unmapnotify(struct wl_listener *listener, void *data)
 {
 	/* Called when the surface is unmapped, and should no longer be shown. */
 	Client *c = wl_container_of(listener, c, unmap);
+	if (c->anim)
+		animend(c->anim);
+	if (!client_is_unmanaged(c))
+		animclose(c);
+	if (c->mon && c == c->mon->slidepin)
+		c->mon->slidepin = NULL;
 	if (c == grabc) {
 		cursor_mode = CurNormal;
 		grabc = NULL;
@@ -4589,11 +4682,14 @@ urgent(struct wl_listener *listener, void *data)
 void
 view(const Arg *arg)
 {
+	uint32_t old;
 	if (!selmon || (arg->ui & TAGMASK) == selmon->tagset[selmon->seltags])
 		return;
+	old = selmon->tagset[selmon->seltags];
 	selmon->seltags ^= 1; /* toggle sel tagset */
 	if (arg->ui & TAGMASK)
 		selmon->tagset[selmon->seltags] = arg->ui & TAGMASK;
+	slidetags(selmon, old, selmon->tagset[selmon->seltags]);
 	focusclient(focustop(selmon), 1);
 	arrange(selmon);
 	drawbars();
@@ -4659,6 +4755,11 @@ xytonode(double x, double y, struct wlr_surface **psurface,
 
 	if (psurface) *psurface = surface;
 	toplevel_from_wlr_surface(surface, pc, pl);
+	if (pc && *pc && (*pc)->slideout) { /* leaving in a space slide */
+		*pc = NULL;
+		if (psurface)
+			*psurface = NULL;
+	}
 }
 
 void
