@@ -1,0 +1,175 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Jorink
+Date: Wed, 18 Nov 2026 14:14:06 +0100
+Subject: [PATCH] touch: touchscreen input
+
+Touch devices are attached to the cursor and mapped to the built-in eDP
+panel. Surfaces that accept wl_touch get real touch events; elsewhere
+(bar, root, clients without touch) the first finger acts as the left
+mouse button, so focus, tag clicks and bindings work as with a pointer.
+---
+--- a/dwl.c
++++ b/dwl.c
+@@ -62,6 +62,7 @@
+ #include <wlr/types/wlr_session_lock_v1.h>
+ #include <wlr/types/wlr_single_pixel_buffer_v1.h>
+ #include <wlr/types/wlr_subcompositor.h>
++#include <wlr/types/wlr_touch.h>
+ #include <wlr/types/wlr_viewporter.h>
+ #include <wlr/types/wlr_virtual_keyboard_v1.h>
+ #include <wlr/types/wlr_virtual_pointer_v1.h>
+@@ -374,6 +375,10 @@
+ static void handlesig(int signo);
+ static void incnmaster(const Arg *arg);
+ static void inputdevice(struct wl_listener *listener, void *data);
++static void touchdown(struct wl_listener *listener, void *data);
++static void touchframe(struct wl_listener *listener, void *data);
++static void touchmotion(struct wl_listener *listener, void *data);
++static void touchup(struct wl_listener *listener, void *data);
+ static const Key *keybinding(uint32_t mods, xkb_keysym_t sym);
+ static void keypress(struct wl_listener *listener, void *data);
+ static void keypressmod(struct wl_listener *listener, void *data);
+@@ -532,6 +537,15 @@
+ static struct wl_listener cursor_axis = {.notify = axisnotify};
+ static struct wl_listener cursor_button = {.notify = buttonpress};
+ static struct wl_listener cursor_frame = {.notify = cursorframe};
++static struct wl_listener touch_down = {.notify = touchdown};
++static struct wl_listener touch_frame = {.notify = touchframe};
++static struct wl_listener touch_motion = {.notify = touchmotion};
++static struct wl_listener touch_up = {.notify = touchup};
++static int touch_devices;
++static int32_t touch_emulated = -1; /* touch point acting as the left button */
++/* Layout position of each touch point's surface, by touch_id. shortcut: assumes
++ * libinput's small slot ids (< 16), true for touchscreens; widen if ever not. */
++static double touch_ox[16], touch_oy[16];
+ static struct wl_listener cursor_motion = {.notify = motionrelative};
+ static struct wl_listener cursor_motion_absolute = {.notify = motionabsolute};
+ static struct wl_listener gpu_reset = {.notify = gpureset};
+@@ -2397,6 +2411,10 @@
+ 	case WLR_INPUT_DEVICE_POINTER:
+ 		createpointer(wlr_pointer_from_input_device(device));
+ 		break;
++	case WLR_INPUT_DEVICE_TOUCH:
++		wlr_cursor_attach_input_device(cursor, device);
++		touch_devices++; /* shortcut: never decremented, touchscreens are built in */
++		break;
+ 	default:
+ 		/* TODO handle other input device types */
+ 		break;
+@@ -2409,6 +2427,8 @@
+ 	caps = WL_SEAT_CAPABILITY_POINTER;
+ 	if (!wl_list_empty(&kb_group->wlr_group->devices))
+ 		caps |= WL_SEAT_CAPABILITY_KEYBOARD;
++	if (touch_devices)
++		caps |= WL_SEAT_CAPABILITY_TOUCH;
+ 	wlr_seat_set_capabilities(seat, caps);
+ }
+ 
+@@ -3666,6 +3686,10 @@
+ 	wl_signal_add(&cursor->events.button, &cursor_button);
+ 	wl_signal_add(&cursor->events.axis, &cursor_axis);
+ 	wl_signal_add(&cursor->events.frame, &cursor_frame);
++	wl_signal_add(&cursor->events.touch_down, &touch_down);
++	wl_signal_add(&cursor->events.touch_frame, &touch_frame);
++	wl_signal_add(&cursor->events.touch_motion, &touch_motion);
++	wl_signal_add(&cursor->events.touch_up, &touch_up);
+ 
+ 	cursor_shape_mgr = wlr_cursor_shape_manager_v1_create(dpy, 1);
+ 	wl_signal_add(&cursor_shape_mgr->events.request_set_shape, &request_set_cursor_shape);
+@@ -4049,6 +4073,96 @@
+ 	motionnotify(0, NULL, 0, 0, 0, 0);
+ }
+ 
++/* The touchscreen is the built-in panel: map 0..1 to the eDP monitor, not the
++ * whole layout (wrong as soon as an external monitor is attached). */
++static void
++touchtolayout(double x, double y, double *lx, double *ly)
++{
++	Monitor *m, *t = NULL;
++	wl_list_for_each(m, &mons, link)
++		if (!t || !strncmp(m->wlr_output->name, "eDP", 3))
++			t = m;
++	if (!t) {
++		wlr_cursor_absolute_to_layout_coords(cursor, NULL, x, y, lx, ly);
++		return;
++	}
++	*lx = t->m.x + x * t->m.width;
++	*ly = t->m.y + y * t->m.height;
++}
++
++/* Clients that support wl_touch get real touch events; for everything else
++ * (the bar, root window, surfaces without touch) the first finger is the left
++ * mouse button, so focus, bar clicks and bindings work as with the pointer. */
++static void
++touchpointer(uint32_t time, double lx, double ly, int press, int release)
++{
++	struct wlr_pointer_button_event ev = {.time_msec = time, .button = BTN_LEFT,
++		.state = release ? WL_POINTER_BUTTON_STATE_RELEASED : WL_POINTER_BUTTON_STATE_PRESSED};
++	wlr_cursor_warp_closest(cursor, NULL, lx, ly);
++	motionnotify(time, NULL, 0, 0, 0, 0);
++	if (press || release)
++		buttonpress(NULL, &ev);
++	wlr_seat_pointer_notify_frame(seat);
++}
++
++void
++touchdown(struct wl_listener *listener, void *data)
++{
++	struct wlr_touch_down_event *event = data;
++	struct wlr_surface *surface = NULL;
++	Client *c = NULL;
++	double lx, ly, sx, sy;
++
++	wlr_idle_notifier_v1_notify_activity(idle_notifier, seat);
++	touchtolayout(event->x, event->y, &lx, &ly);
++	xytonode(lx, ly, &surface, &c, NULL, &sx, &sy);
++
++	if (surface && wlr_surface_accepts_touch(surface, seat)) {
++		if (!locked && c && (!client_is_unmanaged(c) || client_wants_focus(c)))
++			focusclient(c, 1);
++		touch_ox[event->touch_id & 15] = lx - sx;
++		touch_oy[event->touch_id & 15] = ly - sy;
++		wlr_seat_touch_notify_down(seat, surface, event->time_msec,
++				event->touch_id, sx, sy);
++	} else if (touch_emulated < 0) {
++		touch_emulated = event->touch_id;
++		touchpointer(event->time_msec, lx, ly, 1, 0);
++	}
++}
++
++void
++touchmotion(struct wl_listener *listener, void *data)
++{
++	struct wlr_touch_motion_event *event = data;
++	double lx, ly;
++
++	touchtolayout(event->x, event->y, &lx, &ly);
++	if (wlr_seat_touch_get_point(seat, event->touch_id))
++		wlr_seat_touch_notify_motion(seat, event->time_msec, event->touch_id,
++				lx - touch_ox[event->touch_id & 15], ly - touch_oy[event->touch_id & 15]);
++	else if (event->touch_id == touch_emulated)
++		touchpointer(event->time_msec, lx, ly, 0, 0);
++}
++
++void
++touchup(struct wl_listener *listener, void *data)
++{
++	struct wlr_touch_up_event *event = data;
++
++	if (wlr_seat_touch_get_point(seat, event->touch_id)) {
++		wlr_seat_touch_notify_up(seat, event->time_msec, event->touch_id);
++	} else if (event->touch_id == touch_emulated) {
++		touch_emulated = -1;
++		touchpointer(event->time_msec, cursor->x, cursor->y, 0, 1);
++	}
++}
++
++void
++touchframe(struct wl_listener *listener, void *data)
++{
++	wlr_seat_touch_notify_frame(seat);
++}
++
+ void
+ updatemons(struct wl_listener *listener, void *data)
+ {
