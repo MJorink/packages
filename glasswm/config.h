@@ -244,7 +244,7 @@ static const Key keys[] = {
  * added after them while they run. */
 static const DockApp dockapps[] = {
 	/* app_id          command */
-	{ "foot",          termcmd },
+	{ "footclient",    termcmd },
 	{ "librewolf",     browsercmd },
 };
 
