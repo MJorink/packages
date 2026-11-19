@@ -1,0 +1,5 @@
+[Desktop Entry]
+Name=glasswm
+Comment=A light macOS-style Wayland compositor
+Exec=glasswm
+Type=Application

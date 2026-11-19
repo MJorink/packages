@@ -1,5 +1,5 @@
 {
-  description = "Patched and trimmed packages for the dwl desktop (dwl, scenefx, slstatus, bemenu, htop, fonts, cursor, firmware)";
+  description = "glasswm (a macOS-style compositor) and patched, trimmed packages for its desktop (dwl, scenefx, slstatus, bemenu, htop, fonts, cursor, firmware)";
 
   inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
 
@@ -16,6 +16,7 @@
       # Overrides of a nixpkgs package of the same name get prev.<name> passed
       # in explicitly; otherwise callPackage would hand them the overlay result.
       overlays.default = final: prev: {
+        glasswm = final.callPackage ./glasswm { };
         dwl = final.callPackage ./dwl { };
         slstatus = final.callPackage ./slstatus { };
         bemenu = final.callPackage ./bemenu { inherit (prev) bemenu; };
@@ -28,7 +29,7 @@
       };
 
       packages.${system} = {
-        inherit (pkgs) dwl scenefx slstatus bemenu htop jetbrains-mono-nl-nerd-font inter-variable apple-cursor-macos firmware-x270;
+        inherit (pkgs) glasswm dwl scenefx slstatus bemenu htop jetbrains-mono-nl-nerd-font inter-variable apple-cursor-macos firmware-x270;
       };
     };
 }
