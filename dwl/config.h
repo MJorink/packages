@@ -76,8 +76,8 @@ static const struct xkb_rule_names xkb_rules = {
 	.options = NULL,
 };
 
-static const int repeat_rate = 25;
-static const int repeat_delay = 600;
+static const int repeat_rate = 40;
+static const int repeat_delay = 300;
 
 /* Trackpad */
 static const int tap_to_click = 1;
@@ -108,7 +108,7 @@ static const enum libinput_config_tap_button_map button_map = LIBINPUT_CONFIG_TA
 /* commands (scripts live in ~/.local/bin, see dotfiles/) */
 static const char *termcmd[]     = { "footclient", NULL };
 static const char *filescmd[]    = { "footclient", "nnn", NULL };
-static const char *upgradecmd[]  = { "footclient", "--hold", "up -n", NULL };
+static const char *upgradecmd[]  = { "footclient", "--hold", "up", NULL };
 static const char *browsercmd[]  = { "librewolf", NULL };
 static const char *appmenucmd[]  = { "menu-apps", NULL };
 static const char *sysmenucmd[]  = { "menu-system", NULL };
