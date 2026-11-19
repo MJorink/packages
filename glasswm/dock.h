@@ -3,8 +3,9 @@
  * aren't pinned, then after a separator the minimized windows. A dot marks
  * running apps; hovering shows the app's name above it.
  *
- * Click: a minimized window comes back; an app with windows gets its most
- * recent one focused (switching to its tag), or its minimized one restored;
+ * Click: a minimized window comes back; an app with a window on screen gets
+ * its most recent one minimized; one with windows on another tag gets the
+ * most recent focused (switching to it), or its minimized one restored;
  * a pinned app without windows is launched. Middle click opens a new one.
  *
  * It hides below the screen, over the windows rather than taking room from
@@ -380,7 +381,9 @@ dockpress(uint32_t button)
 		if (!best)
 			best = c;
 	}
-	if (best) {
+	if (best && VISIBLEON(best, best->mon) && best->mon == selmon) {
+		minimize(best); /* on screen: the click toggles it away */
+	} else if (best) {
 		if (!VISIBLEON(best, best->mon)) {
 			Arg a = { .ui = best->tags };
 			selmon = best->mon;
