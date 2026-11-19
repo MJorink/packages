@@ -117,6 +117,7 @@ static const char *lockcmd[]     = { "lock", NULL };
 static const char *lockslpcmd[]  = { "lock-suspend", NULL };
 static const char *sessmenucmd[] = { "menu-session", NULL };
 static const char *clipmenucmd[] = { "menu-clipboard", NULL };
+static const char *gitmenucmd[]  = { "menu-git", NULL };
 static const char *volupcmd[]    = { "volume", "up", NULL };
 static const char *voldowncmd[]  = { "volume", "down", NULL };
 static const char *volmutecmd[]  = { "volume", "mute", NULL };
@@ -137,6 +138,7 @@ static const Key keys[] = {
 	{ MODKEY|CTRL,    XKB_KEY_p,                     spawn,            {.v = lockslpcmd} },
 	{ MODKEY,         XKB_KEY_p,                     spawn,            {.v = sessmenucmd} },
 	{ MODKEY,         XKB_KEY_v,                     spawn,            {.v = clipmenucmd} },
+	{ MODKEY,         XKB_KEY_g,                     spawn,            {.v = gitmenucmd} },
 	{ MODKEY,         XKB_KEY_q,                     killclient,       {0} },
 	{ MODKEY|SHIFT,   XKB_KEY_m,                     quit,             {0} },
 	{ MODKEY,         XKB_KEY_backslash,             togglefloating,   {0} },
