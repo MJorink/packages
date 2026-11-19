@@ -5,7 +5,11 @@
  *
  * Click: a minimized window comes back; an app with windows gets its most
  * recent one focused (switching to its tag), or its minimized one restored;
- * a pinned app without windows is launched. Middle click opens a new one. */
+ * a pinned app without windows is launched. Middle click opens a new one.
+ *
+ * It hides below the screen, over the windows rather than taking room from
+ * them, and slides up when the cursor touches the bottom edge (and while a
+ * window minimizes into it). */
 
 #define MAXDOCK 32
 
@@ -24,23 +28,22 @@ typedef struct Dock {
 	struct wlr_scene_blur *labelblur;
 	struct wlr_scene_rect *labelbg;
 	struct wlr_scene_buffer *label;
-	struct wlr_box box;          /* layout coordinates */
+	struct wlr_box box;          /* layout coordinates, when shown */
 	DockItem items[MAXDOCK];
 	int n, hover;
+	int off;                     /* not drawn on this monitor */
+	int shown;                   /* up, or sliding up */
+	float t;                     /* 0 hidden .. 1 shown */
+	int64_t last, hold;          /* last slide step; kept up until hold (ms) */
 } Dock;
+
+static void dockplace(Monitor *m);
 
 static int
 appmatch(Client *c, const char *id)
 {
 	const char *a = client_get_appid(c);
 	return a && !strcasecmp(a, id);
-}
-
-/* The dock's height plus its distance from the bottom, kept free of windows */
-static int
-dockreserve(void)
-{
-	return showdock ? dock_icon + 2 * dock_pad + dock_margin : 0;
 }
 
 static void
@@ -85,11 +88,13 @@ dockdraw(Monitor *m)
 	if (!d)
 		return;
 	if (!showdock || !m->wlr_output->enabled || mirrorof(m)) {
+		d->off = 1;
 		wlr_scene_node_set_enabled(&d->blur->node, 0);
 		wlr_scene_node_set_enabled(&d->bg->node, 0);
 		wlr_scene_node_set_enabled(&d->icons->node, 0);
 		return;
 	}
+	d->off = 0;
 	dockitems(d, size);
 
 	/* layout, logical px */
@@ -128,16 +133,85 @@ dockdraw(Monitor *m)
 	wlr_scene_buffer_set_buffer(d->icons, &buf->base);
 	wlr_buffer_drop(&buf->base);
 	wlr_scene_buffer_set_dest_size(d->icons, w, h);
-	wlr_scene_node_set_position(&d->icons->node, d->box.x, d->box.y);
 	wlr_scene_rect_set_size(d->bg, w, h);
 	wlr_scene_rect_set_corner_radius(d->bg, dock_radius);
-	wlr_scene_node_set_position(&d->bg->node, d->box.x, d->box.y);
 	wlr_scene_blur_set_size(d->blur, w, h);
 	wlr_scene_blur_set_corner_radius(d->blur, dock_radius);
-	wlr_scene_node_set_position(&d->blur->node, d->box.x, d->box.y);
-	wlr_scene_node_set_enabled(&d->blur->node, 1);
-	wlr_scene_node_set_enabled(&d->bg->node, 1);
-	wlr_scene_node_set_enabled(&d->icons->node, 1);
+	dockplace(m);
+}
+
+/* Put the dock t of the way up from just below the screen */
+static void
+dockplace(Monitor *m)
+{
+	Dock *d = m->dock;
+	float e = d->t * d->t * (3 - 2 * d->t); /* ease in and out */
+	int y = d->box.y + (int)lroundf((1 - e) * (float)(d->box.height + dock_margin));
+	int on = !d->off && d->t > 0;
+	wlr_scene_node_set_position(&d->icons->node, d->box.x, y);
+	wlr_scene_node_set_position(&d->bg->node, d->box.x, y);
+	wlr_scene_node_set_position(&d->blur->node, d->box.x, y);
+	wlr_scene_node_set_enabled(&d->blur->node, on);
+	wlr_scene_node_set_enabled(&d->bg->node, on);
+	wlr_scene_node_set_enabled(&d->icons->node, on);
+}
+
+/* Whether the dock on m should be up: the cursor is at the bottom edge or
+ * still on the shown dock, or a window is minimizing into it */
+static int
+dockwant(Monitor *m)
+{
+	Dock *d = m->dock;
+	struct wlr_box b = d->box;
+	if (nowms() < d->hold)
+		return 1;
+	if (xytomon(cursor->x, cursor->y) != m)
+		return 0;
+	if (cursor->y >= m->m.y + m->m.height - 2)
+		return 1;
+	b.height += dock_margin; /* the gap below it */
+	return d->shown && wlr_box_contains_point(&b, cursor->x, cursor->y);
+}
+
+/* Start sliding the dock on m if it should come up or go away */
+static void
+dockupdate(Monitor *m)
+{
+	Dock *d = m->dock;
+	int want;
+	if (!d || d->off || (want = dockwant(m)) == d->shown)
+		return;
+	d->shown = want;
+	d->last = nowms();
+	wlr_output_schedule_frame(m->wlr_output);
+}
+
+/* Keep the dock on m up for ms */
+static void
+dockhold(Monitor *m, int ms)
+{
+	if (!m || !m->dock)
+		return;
+	m->dock->hold = nowms() + ms;
+	dockupdate(m);
+}
+
+/* Slide the dock on m a frame further; returns 1 while it moves or is held */
+static int
+dockstep(Monitor *m, int64_t now)
+{
+	Dock *d = m->dock;
+	float step;
+	if (!d || d->off)
+		return 0;
+	d->shown = dockwant(m);
+	step = dock_slide_ms ? (float)(now - d->last) / (float)dock_slide_ms : 1;
+	d->last = now;
+	if (d->t == (float)d->shown)
+		return now < d->hold;
+	d->t = d->shown ? MIN(1.0f, d->t + step) : MAX(0.0f, d->t - step);
+	dockplace(m);
+	return 1;
 }
 
 static void
@@ -232,7 +306,7 @@ dockat(Monitor *m, double x, double y)
 {
 	Dock *d = m ? m->dock : NULL;
 	int i, lx;
-	if (!d || !d->icons->node.enabled || !wlr_box_contains_point(&d->box, x, y))
+	if (!d || d->off || !d->shown || !wlr_box_contains_point(&d->box, x, y))
 		return -1;
 	lx = (int)x - d->box.x;
 	for (i = 0; i < d->n; i++)
@@ -246,7 +320,9 @@ dockhover(double x, double y)
 {
 	Monitor *m, *at = xytomon(x, y);
 	wl_list_for_each(m, &mons, link) {
-		int i = m == at ? dockat(m, x, y) : -1;
+		int i;
+		dockupdate(m);
+		i = m == at ? dockat(m, x, y) : -1;
 		if (m->dock && i != m->dock->hover) {
 			m->dock->hover = i;
 			docklabel(m);
@@ -271,7 +347,8 @@ dockpress(uint32_t button)
 	DockItem *it;
 	Client *c, *best = NULL, *min = NULL;
 
-	if (!m || !m->dock || !wlr_box_contains_point(&m->dock->box, cursor->x, cursor->y))
+	if (!m || !m->dock || m->dock->off || !m->dock->shown
+			|| !wlr_box_contains_point(&m->dock->box, cursor->x, cursor->y))
 		return 0;
 	if (i < 0)
 		return 1;

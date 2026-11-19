@@ -767,8 +767,6 @@ arrangelayers(Monitor *m)
 		usable_area.height -= m->b.real_height;
 		usable_area.y += topbar ? m->b.real_height : 0;
 	}
-	if (!mirrorof(m))
-		usable_area.height -= dockreserve();
 
 	/* Arrange exclusive surfaces from top->bottom */
 	for (i = 3; i >= 0; i--)
@@ -3301,6 +3299,7 @@ rendermon(struct wl_listener *listener, void *data)
 			animating = 1;
 		}
 	}
+	animating |= dockstep(m, ms);
 	if (animating)
 		wlr_output_schedule_frame(m->wlr_output);
 

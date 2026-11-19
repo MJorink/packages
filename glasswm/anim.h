@@ -377,7 +377,7 @@ docktarget(Client *c)
 	Monitor *m = c->mon;
 	Dock *d = m ? m->dock : NULL;
 	int i;
-	if (d && d->icons->node.enabled)
+	if (d && !d->off)
 		for (i = 0; i < d->n; i++)
 			if (d->items[i].min == c)
 				return (struct wlr_box){ d->box.x + d->items[i].x, d->box.y + dock_pad,
@@ -403,6 +403,7 @@ minimize(Client *c)
 	focusclient(focustop(c->mon), 1);
 	arrange(c->mon);
 	dockchanged();
+	dockhold(c->mon, genie_ms + 300);
 	if (a) {
 		a->icon = docktarget(c);
 		animdraw(a, 0);
