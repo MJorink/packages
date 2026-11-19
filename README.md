@@ -8,8 +8,8 @@ Patched and trimmed packages for the dwl desktop, as a Nix flake overlay
 | `dwl` | dwl 0.9, `dwl/patches/*` (bar, fair layout, focusdir, dragswap, maximize, tagfollow, focusgeom, mirror, attachbottom, tooltips, scenefx, glass, gaps, bar height, animations, touch), `dwl/config.h`. No XWayland. |
 | `scenefx` | 0.5 with liquid glass blur nodes (rim refraction, dispersion, highlight). |
 | `slstatus` | slstatus 1.1, no X11, battery icons, tooltip components, `slstatus/config.h`. |
-| `bemenu` | 0.6.23, Wayland renderer only, Enter works in vim normal mode. |
-| `htop` | 3.5.3 with vim keys (`hjkl`, `gG`, `^U^D^B^F`; kill is `x`, lsof `L`). |
+| `bemenu` | nixpkgs, Wayland renderer only, Enter works in vim normal mode. |
+| `htop` | nixpkgs with vim keys (`hjkl`, `gG`, `^U^D^B^F`; kill is `x`, lsof `L`). |
 | `jetbrains-mono-nl-nerd-font` | 4 of the 96 font files (9 MiB). |
 | `inter-variable` | Inter (SF Pro stand-in), only the upright variable font (0.9 MiB). |
 | `apple-cursor-macos` | The macOS cursor theme of apple-cursor only (unfree), set as the default theme. |

@@ -1,5 +1,5 @@
 /* slstatus 1.1 config: status text for dwl's bar (slstatus -s | dwl).
- * Needs the patches in patches/. After editing, run: rebuild-slstatus */
+ * Needs the patches in patches/. After editing, run: up */
 
 /* interval between updates (in ms); SIGUSR1 updates immediately */
 const unsigned int interval = 2000;

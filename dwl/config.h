@@ -1,5 +1,5 @@
 /* dwl 0.9 config for jorink's ThinkPad X270. Needs the patches in patches/.
- * After editing, run: rebuild-dwl (then log out and in again). */
+ * After editing, run: up (then log out and in again). */
 
 /* Taken from https://github.com/djpohly/dwl/issues/466 */
 #define COLOR(hex)    { ((hex >> 24) & 0xFF) / 255.0f, \
@@ -157,7 +157,7 @@ static const Key keys[] = {
 	{ MODKEY|CTRL,    XKB_KEY_j,                     resizedir,        {.i = WLR_DIRECTION_DOWN} },
 	{ MODKEY|CTRL,    XKB_KEY_k,                     resizedir,        {.i = WLR_DIRECTION_UP} },
 	{ MODKEY|CTRL,    XKB_KEY_l,                     resizedir,        {.i = WLR_DIRECTION_RIGHT} },
-	/* monitors (HDMI-A-1 in extend mode) */
+	/* monitors (external display in extend mode, see menu-display) */
 	{ MODKEY,         XKB_KEY_comma,                 focusmon,         {.i = WLR_DIRECTION_LEFT} },
 	{ MODKEY,         XKB_KEY_period,                focusmon,         {.i = WLR_DIRECTION_RIGHT} },
 	{ MODKEY|SHIFT,   XKB_KEY_comma,                 tagmon,           {.i = WLR_DIRECTION_LEFT} },
