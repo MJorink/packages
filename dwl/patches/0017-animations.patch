@@ -136,7 +136,7 @@ index 35278f8..b615be0 100644
  	struct wlr_box *bbox;
 -	struct wlr_box clip;
 +	struct wlr_box clip, old;
- 	int radius, outer, floating;
+ 	int radius, outer;
  
  	if (!c->mon || !client_surface(c)->mapped)
 @@ -3097,6 +3161,7 @@ resize(Client *c, struct wlr_box geo, int interact)
@@ -147,8 +147,7 @@ index 35278f8..b615be0 100644
  	c->geom = geo;
  	applybounds(c, bbox);
  
-@@ -3105,8 +3170,33 @@ resize(Client *c, struct wlr_box geo, int interact)
- 	floating = c->isfloating || !c->mon->lt[c->mon->sellt]->arrange;
+@@ -3105,7 +3170,32 @@ resize(Client *c, struct wlr_box geo, int interact)
  
  	/* Update scene-graph, including borders. The border is a rectangle with
 -	 * a hole for the content, so their rounded corners stay concentric. */

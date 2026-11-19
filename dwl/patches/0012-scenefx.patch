@@ -183,18 +183,17 @@ index 9bcbfbc..58ffb41 100644
  {
  	struct wlr_box *bbox;
  	struct wlr_box clip;
-+	int radius, outer, floating;
++	int radius, outer;
  
  	if (!c->mon || !client_surface(c)->mapped)
  		return;
-@@ -3031,20 +3063,42 @@ resize(Client *c, struct wlr_box geo, int interact)
+@@ -3031,20 +3063,41 @@ resize(Client *c, struct wlr_box geo, int interact)
  	c->geom = geo;
  	applybounds(c, bbox);
  
 -	/* Update scene-graph, including borders */
 +	radius = cornerradius(c);
 +	outer = radius ? radius + (int)c->bw : 0;
-+	floating = c->isfloating || !c->mon->lt[c->mon->sellt]->arrange;
 +
 +	/* Update scene-graph, including borders. The border is a rectangle with
 +	 * a hole for the content, so their rounded corners stay concentric. */
@@ -227,9 +226,9 @@ index 9bcbfbc..58ffb41 100644
 +	wlr_scene_node_set_position(&c->blur->node, c->bw, c->bw);
 +	wlr_scene_blur_set_size(c->blur, c->geom.width - 2 * c->bw, c->geom.height - 2 * c->bw);
 +	wlr_scene_blur_set_corner_radius(c->blur, radius);
-+	/* Only floating windows can be above other windows, tiled ones can use
-+	 * the cached blur of the background layer */
-+	wlr_scene_blur_set_should_only_blur_bottom_layer(c->blur, !floating);
++	/* All windows use the cached blur of the background layer: blurring a
++	 * window that is already blurred again makes it almost invisible */
++	wlr_scene_blur_set_should_only_blur_bottom_layer(c->blur, 1);
  
  	client_set_size(c, c->geom.width - 2 * c->bw, c->geom.height - 2 * c->bw);
  	client_get_clip(c, &clip);

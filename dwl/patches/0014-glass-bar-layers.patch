@@ -68,7 +68,7 @@ index 3645adb..ebec5fd 100644
  	if (layer_surface == exclusive_focus
  			&& layer_surface->current.keyboard_interactive !=
  				ZWLR_LAYER_SURFACE_V1_KEYBOARD_INTERACTIVITY_EXCLUSIVE)
-@@ -1336,6 +1348,12 @@ createlayersurface(struct wl_listener *listener, void *data)
+@@ -1336,6 +1348,13 @@ createlayersurface(struct wl_listener *listener, void *data)
  	l->popups = surface->data = wlr_scene_tree_create(layer_surface->current.layer
  			< ZWLR_LAYER_SHELL_V1_LAYER_TOP ? layers[LyrTop] : scene_layer);
  	l->scene->node.data = l->popups->node.data = l;
@@ -77,17 +77,16 @@ index 3645adb..ebec5fd 100644
 +		wlr_scene_node_lower_to_bottom(&l->blur->node);
 +		wlr_scene_blur_set_corner_radius(l->blur, corner_radius);
 +		wlr_scene_blur_set_glass(l->blur, 1);
++		wlr_scene_blur_set_should_only_blur_bottom_layer(l->blur, 1);
 +	}
  
  	wl_list_insert(&l->mon->layers[layer_surface->pending.layer],&l->link);
  	wlr_surface_send_enter(surface, layer_surface->output);
-@@ -1418,6 +1436,9 @@ createmon(struct wl_listener *listener, void *data)
+@@ -1418,6 +1437,7 @@ createmon(struct wl_listener *listener, void *data)
  
  	m->scene_buffer = wlr_scene_buffer_create(layers[LyrBottom], NULL);
  	m->scene_buffer->point_accepts_input = baracceptsinput;
 +	m->barblur = glassbelow(&m->scene_buffer->node);
-+	/* Only the background is below the bar */
-+	wlr_scene_blur_set_should_only_blur_bottom_layer(m->barblur, 1);
  	updatebar(m);
  
  	wl_list_insert(&mons, &m->link);
@@ -130,7 +129,7 @@ index 3645adb..ebec5fd 100644
  }
  
  void
-@@ -3140,6 +3169,23 @@ roundbuffer(struct wlr_scene_buffer *buffer, int sx, int sy, void *data)
+@@ -3140,6 +3169,25 @@ roundbuffer(struct wlr_scene_buffer *buffer, int sx, int sy, void *data)
  			bottom && right ? radius : 0, bottom && left ? radius : 0));
  }
  
@@ -148,6 +147,8 @@ index 3645adb..ebec5fd 100644
 +	struct wlr_scene_blur *blur = wlr_scene_blur_create(node->parent, 0, 0);
 +	wlr_scene_node_place_below(&blur->node, node);
 +	wlr_scene_blur_set_glass(blur, 1);
++	/* Blurring blurred windows again would make them almost invisible */
++	wlr_scene_blur_set_should_only_blur_bottom_layer(blur, 1);
 +	return blur;
 +}
 +
