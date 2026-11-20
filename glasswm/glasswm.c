@@ -187,6 +187,7 @@ typedef struct {
 	int ax, ay, placed;
 	float alpha; /* of the fade-in, 1 when shown */
 	struct Anim *anim; /* anim.h: hidden while it draws the window */
+	int64_t openwait; /* new, hidden until it has drawn at its size (since when) */
 	int slideout; /* leaving the screen in a space slide */
 	int64_t animstart;
 } Client;
@@ -426,6 +427,8 @@ static void minimize(Client *c);
 static void unminimize(Client *c);
 static void placenode(Client *c, int x, int y);
 static int slidestep(Monitor *m, int64_t now);
+static void openready(Client *c, int64_t now);
+static void sendframe(struct wlr_surface *s, int sx, int sy, void *data);
 static void outputmgrapply(struct wl_listener *listener, void *data);
 static void outputmgrapplyortest(struct wlr_output_configuration_v1 *config, int test);
 static void outputmgrtest(struct wl_listener *listener, void *data);
@@ -1255,6 +1258,8 @@ commitnotify(struct wl_listener *listener, void *data)
 	}
 
 	resize(c, c->geom, (c->isfloating && !c->isfullscreen));
+	if (c->openwait)
+		openready(c, nowms());
 	/* Subsurfaces may have been added or resized */
 	if (client_surface(c)->mapped)
 		wlr_scene_node_for_each_buffer(&c->scene_surface->node, roundbuffer, c);
@@ -3282,6 +3287,20 @@ rendermon(struct wl_listener *listener, void *data)
 			animating |= animate(c, ms);
 	animating |= slidestep(m, ms);
 	animating |= animstep(m, ms);
+	/* windows waiting to be shown or drawn by an animation are hidden,
+	 * so the scene sends them no frame events: send them, or clients that
+	 * wait for one before drawing again (foot) lag behind */
+	wl_list_for_each(c, &clients, link) {
+		if (c->mon != m || !client_surface(c)->mapped)
+			continue;
+		if (c->openwait)
+			openready(c, ms);
+		if (c->openwait || (c->anim && c->anim->live)) {
+			struct timespec ts = { ms / 1000, (ms % 1000) * 1000000 };
+			wlr_xdg_surface_for_each_surface(c->surface.xdg, sendframe, &ts);
+			animating = 1;
+		}
+	}
 	if (animating)
 		wlr_output_schedule_frame(m->wlr_output);
 
@@ -3489,9 +3508,11 @@ resize(Client *c, struct wlr_box geo, int interact)
 		placenode(c, c->geom.x, c->geom.y);
 		c->animstart = 0;
 	} else if (!c->placed) {
+		/* zoom in once the client has drawn at this size, see openready() */
 		placenode(c, c->geom.x, c->geom.y);
 		c->placed = 1;
-		animopen(c);
+		c->openwait = nowms();
+		showclient(c);
 	} else if (old.x != c->geom.x || old.y != c->geom.y) {
 		c->ax = c->scene->node.x;
 		c->ay = c->scene->node.y;
@@ -4311,6 +4332,7 @@ unmapnotify(struct wl_listener *listener, void *data)
 	Client *c = wl_container_of(listener, c, unmap);
 	if (c->anim)
 		animend(c->anim);
+	c->openwait = 0;
 	if (!client_is_unmanaged(c))
 		animclose(c);
 	if (c->mon && c == c->mon->slidepin)

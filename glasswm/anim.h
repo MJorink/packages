@@ -232,7 +232,7 @@ showclient(Client *c)
 {
 	if (c->scene && c->mon)
 		wlr_scene_node_set_enabled(&c->scene->node,
-				(VISIBLEON(c, c->mon) || c->slideout) && !c->anim);
+				(VISIBLEON(c, c->mon) || c->slideout) && !c->anim && !c->openwait);
 }
 
 static void
@@ -322,13 +322,38 @@ static void
 animopen(Client *c)
 {
 	Anim *a;
-	if (!animation_ms || c->isfullscreen || !c->mon)
+	if (!animation_ms || c->isfullscreen || !c->mon) {
+		showclient(c);
 		return;
+	}
 	a = animnew(c, AnimOpen, open_ms, c->scene->node.parent);
 	a->live = 1;
 	a->win = c->geom;
 	wlr_scene_node_raise_to_top(&a->tree->node);
 	animdraw(a, 0);
+}
+
+/* A new window waits, hidden, until its client has drawn at the size
+ * resize() gave it, so the zoom shows it as it will be. Clients that keep a
+ * size of their own are shown after open_wait_ms anyway. */
+void
+openready(Client *c, int64_t now)
+{
+	struct wlr_box g = c->surface.xdg->geometry;
+	if (!c->openwait || (now - c->openwait < open_wait_ms
+			&& (g.width != CONTENTW(c) || g.height != CONTENTH(c))))
+		return;
+	c->openwait = 0;
+	if (open_ms && animation_ms && VISIBLEON(c, c->mon) && !c->isfullscreen)
+		animopen(c);
+	else
+		showclient(c);
+}
+
+void
+sendframe(struct wlr_surface *s, int sx, int sy, void *data)
+{
+	wlr_surface_send_frame_done(s, data);
 }
 
 /* A window closes (from unmapnotify(), before its scene is destroyed) */
@@ -369,6 +394,7 @@ minimize(Client *c)
 	Anim *a = NULL;
 	if (!c || c->isminimized)
 		return;
+	c->openwait = 0;
 	if (genie_ms && c->scene->node.enabled && !c->isfullscreen)
 		a = animnew(c, AnimGenie, genie_ms, layers[LyrTop]);
 	c->isminimized = 1;

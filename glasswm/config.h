@@ -65,6 +65,7 @@ static const float shadow_alpha_unfocused  = 0.4f;
 /* animations in ms, 0 disables one. Moves use a spring like macOS'. */
 static const int animation_ms              = 260; /* windows moving to new places in the layout */
 static const int open_ms                   = 240; /* new windows zoom in and fade in */
+static const int open_wait_ms              = 200; /* most a new window waits to have drawn at its size */
 static const int close_ms                  = 160; /* closed windows shrink and fade out */
 static const int genie_ms                  = 520; /* minimize into the dock and back */
 static const int slide_ms                  = 420; /* switching tags slides like spaces */
