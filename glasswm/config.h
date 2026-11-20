@@ -91,6 +91,7 @@ static const int dock_gap                  = 6;  /* between icons */
 static const int dock_margin               = 6;  /* from the bottom of the screen */
 static const int dock_radius               = 22;
 static const int dock_slide_ms             = 200; /* autohide: slide up/down; 0 is instant */
+static const int dock_hide_ms              = 400; /* autohide: stays up this long after the cursor leaves it */
 static const float dock_color[]            = PCOLOR(0x5c5c6033); /* tint of its glass */
 static const uint32_t dock_dot             = 0xd9ffffff; /* running app: ARGB */
 static const uint32_t dock_separator       = 0x4dffffff;

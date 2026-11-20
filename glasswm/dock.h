@@ -36,6 +36,7 @@ typedef struct Dock {
 	int shown;                   /* up, or sliding up */
 	float t;                     /* 0 hidden .. 1 shown */
 	int64_t last, hold;          /* last slide step; kept up until hold (ms) */
+	int64_t leave;               /* up until then after the cursor left it (ms) */
 } Dock;
 
 static void dockplace(Monitor *m);
@@ -157,21 +158,36 @@ dockplace(Monitor *m)
 	wlr_scene_node_set_enabled(&d->icons->node, on);
 }
 
-/* Whether the dock on m should be up: the cursor is at the bottom edge or
- * still on the shown dock, or a window is minimizing into it */
+static void dockupdate(Monitor *m);
+
+static int
+dockhidetimer(void *data)
+{
+	Monitor *m;
+	wl_list_for_each(m, &mons, link)
+		dockupdate(m);
+	return 0;
+}
+
+/* Whether the dock on m should be up: the cursor is at the bottom edge or on
+ * the shown dock (or left it less than dock_hide_ms ago), or a window is
+ * minimizing into it */
 static int
 dockwant(Monitor *m)
 {
+	static struct wl_event_source *hide;
 	Dock *d = m->dock;
 	struct wlr_box b = d->box;
-	if (nowms() < d->hold)
-		return 1;
-	if (xytomon(cursor->x, cursor->y) != m)
-		return 0;
-	if (cursor->y >= m->m.y + m->m.height - 2)
-		return 1;
 	b.height += dock_margin; /* the gap below it */
-	return d->shown && wlr_box_contains_point(&b, cursor->x, cursor->y);
+	if (xytomon(cursor->x, cursor->y) == m && (cursor->y >= m->m.y + m->m.height - 2
+			|| (d->shown && wlr_box_contains_point(&b, cursor->x, cursor->y)))) {
+		if (!hide)
+			hide = wl_event_loop_add_timer(event_loop, dockhidetimer, NULL);
+		d->leave = nowms() + dock_hide_ms;
+		wl_event_source_timer_update(hide, dock_hide_ms + 1); /* recheck once the hold ran out */
+		return 1;
+	}
+	return nowms() < d->hold || nowms() < d->leave;
 }
 
 /* Start sliding the dock on m if it should come up or go away */
