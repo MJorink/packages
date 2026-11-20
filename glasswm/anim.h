@@ -6,6 +6,8 @@
  * own as horizontal strips. Each strip can be moved and squeezed on its own,
  * which is enough for the genie (minimize to the dock and back) and for the
  * zooms of opening and closing windows. The window itself is hidden meanwhile.
+ * Layer surfaces named "menu" (bemenu as Spotlight) zoom the same way, with
+ * their glass: blur nodes are items too, except in the genie.
  *
  * Items lock their buffers, so a closing window can still be drawn after the
  * client is gone. An opening window's items are taken again every frame, as
@@ -16,7 +18,9 @@ enum { AnimOpen, AnimClose, AnimGenie };
 #define MAXITEMS 24
 
 typedef struct {
-	struct wlr_buffer *buf; /* NULL for a rect */
+	int isblur;             /* glass: a blur node, see glass and bottomonly */
+	int glass, bottomonly;
+	struct wlr_buffer *buf; /* NULL for a rect or blur */
 	struct wlr_fbox src;    /* in buffer pixels */
 	struct wlr_box r;       /* window-relative, logical px */
 	float color[4];         /* rect colour, premultiplied */
@@ -26,6 +30,8 @@ typedef struct {
 
 typedef struct Anim {
 	Client *c;      /* NULL once the window is gone (closing) */
+	LayerSurface *l; /* or the layer surface (a menu), likewise */
+	float scale0;   /* zooms: the size it starts from (opening) or ends at */
 	Monitor *m;
 	int mode, reverse, live;
 	int64_t start;
@@ -73,10 +79,11 @@ releaseitems(Anim *a)
 	a->n = 0;
 }
 
-/* Collect the buffers and rects under node, x and y being its parent's
- * window-relative position. Shadows, blurs and the border are left out. */
+/* Collect the buffers, rects and blurs under node, x and y being its
+ * parent's window-relative position. Shadows and skip (a window's border)
+ * are left out, and blurs from the genie's strips. */
 static void
-takeitems(Anim *a, Client *c, struct wlr_scene_node *node, int x, int y)
+takeitems(Anim *a, struct wlr_scene_rect *skip, struct wlr_scene_node *node, int x, int y)
 {
 	struct wlr_scene_node *child;
 	struct wlr_scene_tree *tree;
@@ -90,7 +97,7 @@ takeitems(Anim *a, Client *c, struct wlr_scene_node *node, int x, int y)
 	case WLR_SCENE_NODE_TREE:
 		tree = wlr_scene_tree_from_node(node);
 		wl_list_for_each(child, &tree->children, link)
-			takeitems(a, c, child, x, y);
+			takeitems(a, skip, child, x, y);
 		break;
 	case WLR_SCENE_NODE_BUFFER: {
 		struct wlr_scene_buffer *sb = wlr_scene_buffer_from_node(node);
@@ -107,12 +114,22 @@ takeitems(Anim *a, Client *c, struct wlr_scene_node *node, int x, int y)
 	}
 	case WLR_SCENE_NODE_RECT: {
 		struct wlr_scene_rect *rect = wlr_scene_rect_from_node(node);
-		if (rect == c->border)
+		if (rect == skip)
 			break;
 		it = &a->items[a->n++];
 		*it = (AnimItem){ .r = { x, y, rect->width, rect->height }, .opacity = 1.0f,
 			.corners = rect->corners };
 		memcpy(it->color, rect->color, sizeof(it->color));
+		break;
+	}
+	case WLR_SCENE_NODE_BLUR: {
+		struct wlr_scene_blur *b = wlr_scene_blur_from_node(node);
+		if (a->mode == AnimGenie)
+			break;
+		it = &a->items[a->n++];
+		*it = (AnimItem){ .isblur = 1, .r = { x, y, b->width, b->height }, .opacity = b->alpha,
+			.corners = b->corners, .glass = b->glass,
+			.bottomonly = b->should_only_blur_bottom_layer };
 		break;
 	}
 	default:
@@ -127,9 +144,22 @@ takewindow(Anim *a, Client *c)
 	releaseitems(a);
 	/* c->scene itself may be hidden: start from its children */
 	wl_list_for_each(child, &c->scene->children, link)
-		takeitems(a, c, child, 0, 0);
+		takeitems(a, c->border, child, 0, 0);
 	a->w = c->geom.width;
 	a->h = c->geom.height;
+}
+
+static void
+takelayer(Anim *a, LayerSurface *l)
+{
+	struct wlr_scene_node *child;
+	releaseitems(a);
+	wl_list_for_each(child, &l->scene->children, link)
+		takeitems(a, NULL, child, 0, 0);
+	a->w = a->win.width = l->layer_surface->surface->current.width;
+	a->h = a->win.height = l->layer_surface->surface->current.height;
+	a->win.x = l->scene->node.x;
+	a->win.y = l->scene->node.y;
 }
 
 /* Genie: where window row v (0 top, 1 bottom) is at progress p (0 the
@@ -174,8 +204,8 @@ animdraw(Anim *a, float p)
 			l = (l + l1) / 2;
 			r = (r + r1) / 2;
 		} else {
-			/* zoom about the centre from 85% (opening) or to 92% (closing) */
-			float s = a->mode == AnimOpen ? 0.85f + 0.15f * p : 0.92f + 0.08f * p;
+			/* zoom about the centre from scale0 (opening) or to it (closing) */
+			float s = a->scale0 + (1.0f - a->scale0) * p;
 			float cx = (float)a->win.x + (float)a->win.width / 2;
 			float cy = (float)a->win.y + (float)a->win.height / 2;
 			y0 = cy - (float)a->win.height / 2 * s;
@@ -205,7 +235,17 @@ animdraw(Anim *a, float p)
 					top ? (int)((float)it->corners.top_right * sx) : 0,
 					bottom ? (int)((float)it->corners.bottom_right * sx) : 0,
 					bottom ? (int)((float)it->corners.bottom_left * sx) : 0);
-			if (it->buf) {
+			if (it->isblur) {
+				struct wlr_scene_blur *b;
+				if (strips > 1)
+					continue;
+				b = wlr_scene_blur_create(a->tree, X1 - X0, Y1 - Y0);
+				wlr_scene_blur_set_glass(b, it->glass);
+				wlr_scene_blur_set_should_only_blur_bottom_layer(b, it->bottomonly);
+				wlr_scene_blur_set_corner_radii(b, cr);
+				wlr_scene_blur_set_alpha(b, it->opacity * alpha);
+				wlr_scene_node_set_position(&b->node, X0, Y0);
+			} else if (it->buf) {
 				struct wlr_scene_buffer *sb = wlr_scene_buffer_create(a->tree, it->buf);
 				struct wlr_fbox src = it->src;
 				src.y = it->src.y + (double)(ia - (float)it->r.y) / it->r.height * it->src.height;
@@ -239,9 +279,16 @@ static void
 animend(Anim *a)
 {
 	Client *c = a->c;
+	LayerSurface *l = a->l;
 	wl_list_remove(&a->link);
 	wlr_scene_node_destroy(&a->tree->node);
 	releaseitems(a);
+	if (l) {
+		l->anim = NULL;
+		wlr_scene_node_set_enabled(&l->scene->node, l->mapped);
+		if (l->mon)
+			wlr_output_schedule_frame(l->mon->wlr_output);
+	}
 	if (c) {
 		c->anim = NULL;
 		showclient(c);
@@ -294,6 +341,13 @@ animstep(Monitor *m, int64_t now)
 			animend(a);
 			continue;
 		}
+		if (a->live && a->l) {
+			struct timespec ts = { now / 1000, (now % 1000) * 1000000 };
+			takelayer(a, a->l);
+			/* hidden, so the scene sends it no frame events: bemenu
+			 * waits for them to draw its own animations */
+			wlr_layer_surface_v1_for_each_surface(a->l->layer_surface, sendframe, &ts);
+		}
 		if (a->live && a->c) {
 			takewindow(a, a->c);
 			a->win.width = a->c->geom.width;
@@ -328,6 +382,7 @@ animopen(Client *c)
 	}
 	a = animnew(c, AnimOpen, open_ms, c->scene->node.parent);
 	a->live = 1;
+	a->scale0 = 0.85f;
 	a->win = c->geom;
 	wlr_scene_node_raise_to_top(&a->tree->node);
 	animdraw(a, 0);
@@ -365,9 +420,45 @@ animclose(Client *c)
 		return;
 	a = animnew(c, AnimClose, close_ms, c->scene->node.parent);
 	a->reverse = 1;
+	a->scale0 = 0.92f;
 	a->c = NULL; /* the client goes away now */
 	c->anim = NULL;
 	animdraw(a, 1);
+}
+
+/* A layer surface for a menu: Spotlight zooms in from a little smaller
+ * as it fades in, and fades out shrinking slightly when it closes */
+static Anim *
+animlayer(LayerSurface *l, int mode)
+{
+	Anim *a;
+	if (!l->mon || !(mode == AnimOpen ? menu_open_ms : menu_close_ms))
+		return NULL;
+	if (l->anim)
+		animend(l->anim);
+	a = ecalloc(1, sizeof(*a));
+	a->l = l;
+	a->m = l->mon;
+	a->mode = mode;
+	a->ms = mode == AnimOpen ? menu_open_ms : menu_close_ms;
+	a->scale0 = mode == AnimOpen ? 0.95f : 0.97f;
+	a->start = nowms();
+	a->layer = l->scene->node.parent;
+	a->tree = wlr_scene_tree_create(a->layer);
+	takelayer(a, l);
+	wl_list_insert(&anims, &a->link);
+	if (mode == AnimOpen) {
+		a->live = 1;
+		l->anim = a;
+		wlr_scene_node_set_enabled(&l->scene->node, 0);
+		animdraw(a, 0);
+	} else {
+		a->reverse = 1;
+		a->l = NULL; /* the surface goes away now */
+		animdraw(a, 1);
+	}
+	wlr_output_schedule_frame(a->m->wlr_output);
+	return a;
 }
 
 /* c's icon in the dock of its monitor; the bottom middle if it has none */

@@ -1,4 +1,4 @@
-From 0b8e78ef5f353339dcd6e7bdc87072a4558ffab0 Mon Sep 17 00:00:00 2001
+From 4e03ca9c15a8448fd2fc2d28a37ecb0aa3aa0027 Mon Sep 17 00:00:00 2001
 From: jorink <maxjorink@gmail.com>
 Date: Fri, 20 Nov 2026 11:41:19 +0000
 Subject: [PATCH] spotlight: draw the menu like macOS Spotlight
@@ -12,19 +12,19 @@ glass behind the surface; this draws a light tint and a hairline rim.
 On by default; BEMENU_SPOTLIGHT=0 restores bemenu's own look. Needs
 nanosvg.h and nanosvgrast.h in lib/renderers/.
 ---
- GNUmakefile                     |   2 +-
- client/common/common.c          |   5 +
- lib/renderers/cairo_renderer.h  |   7 +
- lib/renderers/spotlight.h       | 405 ++++++++++++++++++++++++++++++++
- lib/renderers/wayland/nanosvg.c |   9 +
- lib/renderers/wayland/wayland.h |   2 +
- lib/renderers/wayland/window.c  |  35 ++-
- 7 files changed, 460 insertions(+), 5 deletions(-)
+ GNUmakefile                       |   2 +-
+ client/common/common.c            |   5 +
+ lib/renderers/cairo_renderer.h    |   7 +
+ lib/renderers/spotlight.h         | 484 ++++++++++++++++++++++++++++++
+ lib/renderers/wayland/spotlight.c |  15 +
+ lib/renderers/wayland/wayland.h   |   2 +
+ lib/renderers/wayland/window.c    |  42 ++-
+ 7 files changed, 552 insertions(+), 5 deletions(-)
  create mode 100644 lib/renderers/spotlight.h
- create mode 100644 lib/renderers/wayland/nanosvg.c
+ create mode 100644 lib/renderers/wayland/spotlight.c
 
 diff --git a/GNUmakefile b/GNUmakefile
-index a1fc704..5ca20ba 100644
+index a1fc704..dd53018 100644
 --- a/GNUmakefile
 +++ b/GNUmakefile
 @@ -111,7 +111,7 @@ viewporter.a: private override CPPFLAGS += $(shell $(PKG_CONFIG) --cflags-only-I
@@ -32,7 +32,7 @@ index a1fc704..5ca20ba 100644
  bemenu-renderer-wayland.so: private override LDLIBS += $(shell $(PKG_CONFIG) --libs wayland-client cairo pango pangocairo xkbcommon)
  bemenu-renderer-wayland.so: private override CPPFLAGS += $(shell $(PKG_CONFIG) --cflags-only-I wayland-client cairo pango pangocairo xkbcommon)
 -bemenu-renderer-wayland.so: lib/renderers/cairo_renderer.h lib/renderers/wayland/wayland.c lib/renderers/wayland/wayland.h lib/renderers/wayland/registry.c lib/renderers/wayland/window.c xdg-shell.a wlr-layer-shell.a fractional-scale.a viewporter.a util.a
-+bemenu-renderer-wayland.so: lib/renderers/cairo_renderer.h lib/renderers/spotlight.h lib/renderers/wayland/nanosvg.c lib/renderers/wayland/wayland.c lib/renderers/wayland/wayland.h lib/renderers/wayland/registry.c lib/renderers/wayland/window.c xdg-shell.a wlr-layer-shell.a fractional-scale.a viewporter.a util.a
++bemenu-renderer-wayland.so: lib/renderers/cairo_renderer.h lib/renderers/spotlight.h lib/renderers/wayland/spotlight.c lib/renderers/wayland/wayland.c lib/renderers/wayland/wayland.h lib/renderers/wayland/registry.c lib/renderers/wayland/window.c xdg-shell.a wlr-layer-shell.a fractional-scale.a viewporter.a util.a
  
  common.a: client/common/common.c client/common/common.h
  bemenu: common.a client/bemenu.c
@@ -77,10 +77,10 @@ index f0543f5..3061322 100644
      memset(out_result, 0, sizeof(struct cairo_paint_result));
 diff --git a/lib/renderers/spotlight.h b/lib/renderers/spotlight.h
 new file mode 100644
-index 0000000..67f920b
+index 0000000..88e5923
 --- /dev/null
 +++ b/lib/renderers/spotlight.h
-@@ -0,0 +1,405 @@
+@@ -0,0 +1,484 @@
 +/* spotlight.h: bemenu drawn like macOS Spotlight (Tahoe, dark).
 + *
 + * A search field in a glass pill: a magnifier, the typed text in a large
@@ -108,6 +108,59 @@ index 0000000..67f920b
 +#define SPOT_ICON 26
 +#define SPOT_RADIUS 26
 +#define SPOT_LINES 8     /* results shown without -l */
++#define SPOT_GROW_MS 320 /* the panel growing or shrinking with the results */
++#define SPOT_SEL_MS 150  /* the selection gliding to another row */
++
++#include <time.h>
++
++/* spotlight.c: the time of the frame being drawn (the same for every
++ * attempt at drawing it, see bm_wl_window_render()) and whether the
++ * frame wants another one because something is still moving */
++extern int64_t bm_spot_now;
++extern bool bm_spot_animating;
++
++static inline int64_t
++spot_clock(void)
++{
++    struct timespec t;
++    clock_gettime(CLOCK_MONOTONIC, &t);
++    return (int64_t)t.tv_sec * 1000 + t.tv_nsec / 1000000;
++}
++
++/* A critically damped spring from 0 to 1 over t in [0, 1], as macOS moves
++ * things: quick to start, settling without overshooting */
++static inline double
++spot_spring(double t)
++{
++    return t >= 1 ? 1 : 1 - (1 + 9 * t) * exp(-9 * t);
++}
++
++/* A value moving to new targets with a spring: returns its value now */
++struct spot_motion {
++    double from, to, value;
++    int64_t start;
++    bool set;
++};
++
++static inline double
++spot_move(struct spot_motion *m, double target, int ms)
++{
++    if (!m->set) {
++        m->from = m->to = m->value = target;
++        m->set = true;
++    } else if (target != m->to) {
++        m->from = m->value;
++        m->to = target;
++        m->start = bm_spot_now;
++    }
++    double t = ms > 0 ? (double)(bm_spot_now - m->start) / ms : 1;
++    m->value = m->from + (m->to - m->from) * spot_spring(t < 0 ? 0 : t);
++    if (t < 1)
++        bm_spot_animating = true;
++    else
++        m->value = m->to;
++    return m->value;
++}
 +
 +static inline bool
 +bm_spotlight(void)
@@ -380,7 +433,27 @@ index 0000000..67f920b
 +        lines = max_height > SPOT_BAR + 16 + SPOT_ROW ? (max_height - SPOT_BAR - 16) / SPOT_ROW : 1;
 +    uint32_t page = (menu->index / lines) * lines;
 +    uint32_t shown = count > page ? (count - page < lines ? count - page : lines) : 0;
-+    double H = SPOT_BAR + (shown ? 1 + 8 + shown * SPOT_ROW + 8 : 0);
++    static struct spot_motion grow, sel;
++    static uint32_t selpage;
++    if (!bm_spot_now)
++        bm_spot_now = spot_clock();
++    bm_spot_animating = false;
++    /* the panel grows and shrinks with the results; the rows are revealed
++     * (or cut) at its animated edge */
++    double H = spot_move(&grow, SPOT_BAR + (shown ? 1 + 8 + shown * SPOT_ROW + 8 : 0), SPOT_GROW_MS);
++    /* the selection glides between rows, but jumps to another page */
++    double sely = -1;
++    for (uint32_t i = 0; i < shown; i++)
++        if (items[page + i] == hl)
++            sely = SPOT_BAR + 1 + 8 + i * SPOT_ROW;
++    if (sely >= 0) {
++        if (page != selpage)
++            sel.set = false;
++        selpage = page;
++        sely = spot_move(&sel, sely, SPOT_SEL_MS);
++    } else {
++        sel.set = false;
++    }
 +
 +    memset(out, 0, sizeof(*out));
 +    spot_font(menu, 16.5, false, big, sizeof(big));
@@ -442,10 +515,18 @@ index 0000000..67f920b
 +        cairo_fill(cr);
 +    }
 +
-+    if (shown) {
++    if (H > SPOT_BAR + 1) {
++        cairo_save(cr);
++        bm_cairo_rounded_path(cr, 0, 0, W, H, SPOT_RADIUS);
++        cairo_clip(cr);
 +        cairo_set_source_rgba(cr, 1, 1, 1, 0.1);
 +        cairo_rectangle(cr, 0, SPOT_BAR, W, 1);
 +        cairo_fill(cr);
++        if (sely >= 0) {
++            bm_cairo_rounded_path(cr, 8, sely, W - 16, SPOT_ROW, 9);
++            cairo_set_source_rgba(cr, 0.04, 0.52, 1.0, menu->event_feedback ? 0.6 : 1);
++            cairo_fill(cr);
++        }
 +
 +        for (uint32_t i = 0; i < shown; i++)
 +            if (spot_icon(items[page + i]->text ? items[page + i]->text : "", SPOT_ICON * cairo->scale))
@@ -455,13 +536,10 @@ index 0000000..67f920b
 +        for (uint32_t i = 0; i < shown; i++, y += SPOT_ROW) {
 +            struct bm_item *it = items[page + i];
 +            const char *text = it->text ? it->text : "";
-+            bool h = it == hl, sel = bm_menu_item_is_selected(menu, it);
-+            if (h || sel) {
++            bool h = it == hl, picked = bm_menu_item_is_selected(menu, it);
++            if (picked && !h) {
 +                bm_cairo_rounded_path(cr, 8, y, W - 16, SPOT_ROW, 9);
-+                if (h)
-+                    cairo_set_source_rgba(cr, 0.04, 0.52, 1.0, menu->event_feedback ? 0.6 : 1);
-+                else
-+                    cairo_set_source_rgba(cr, 1, 1, 1, 0.12);
++                cairo_set_source_rgba(cr, 1, 1, 1, 0.12);
 +                cairo_fill(cr);
 +            }
 +            double x = 22;
@@ -479,20 +557,24 @@ index 0000000..67f920b
 +            }
 +            spot_text(cairo, row, text, x, y, SPOT_ROW, W - x - 24, 1, 1, 1, h ? 1 : 0.88);
 +        }
++        cairo_restore(cr);
 +    }
 +
 +    out->displayed = shown ? shown : 1;
-+    out->height = (uint32_t)ceil(H * cairo->scale);
++    out->height = (uint32_t)ceil(ceil(H) * cairo->scale);
 +}
 +
 +#endif /* _BM_SPOTLIGHT_H_ */
-diff --git a/lib/renderers/wayland/nanosvg.c b/lib/renderers/wayland/nanosvg.c
+diff --git a/lib/renderers/wayland/spotlight.c b/lib/renderers/wayland/spotlight.c
 new file mode 100644
-index 0000000..cab8a69
+index 0000000..79524c2
 --- /dev/null
-+++ b/lib/renderers/wayland/nanosvg.c
-@@ -0,0 +1,9 @@
-+/* nanosvg for the Spotlight look's SVG icons (spotlight.h) */
++++ b/lib/renderers/wayland/spotlight.c
+@@ -0,0 +1,15 @@
++/* nanosvg for the Spotlight look's SVG icons, and the state its animations
++ * share between the renderer and the window (spotlight.h) */
++#include <stdbool.h>
++#include <stdint.h>
 +#include <stdio.h>
 +#include <string.h>
 +#include <math.h>
@@ -501,6 +583,9 @@ index 0000000..cab8a69
 +#define NANOSVGRAST_IMPLEMENTATION
 +#include "../nanosvg.h"
 +#include "../nanosvgrast.h"
++
++int64_t bm_spot_now;      /* time of the frame being drawn, ms */
++bool bm_spot_animating;   /* the last frame wants another one */
 diff --git a/lib/renderers/wayland/wayland.h b/lib/renderers/wayland/wayland.h
 index ef3859e..641cc55 100644
 --- a/lib/renderers/wayland/wayland.h
@@ -515,7 +600,7 @@ index ef3859e..641cc55 100644
      float width_factor;
      double scale;
 diff --git a/lib/renderers/wayland/window.c b/lib/renderers/wayland/window.c
-index 043deab..1156b6e 100644
+index 043deab..ffdf0bd 100644
 --- a/lib/renderers/wayland/window.c
 +++ b/lib/renderers/wayland/window.c
 @@ -223,6 +223,10 @@ get_align_anchor(enum bm_align align)
@@ -529,7 +614,16 @@ index 043deab..1156b6e 100644
      if(align == BM_ALIGN_TOP) {
          anchor |= ZWLR_LAYER_SURFACE_V1_ANCHOR_TOP;
      } else if(align == BM_ALIGN_CENTER) {
-@@ -273,6 +277,15 @@ bm_wl_window_render(struct window *window, struct wl_display *display, struct bm
+@@ -252,6 +256,8 @@ bm_wl_window_render(struct window *window, struct wl_display *display, struct bm
+     (void)display;
+     assert(window && menu);
+     struct buffer *buffer;
++    /* Spotlight's animations: draw both tries below at the same moment */
++    bm_spot_now = spot_clock();
+     for (int tries = 0; tries < 2; ++tries) {
+         if (!(buffer = next_buffer(window))) {
+             fprintf(stderr, "could not get next buffer");
+@@ -273,6 +279,15 @@ bm_wl_window_render(struct window *window, struct wl_display *display, struct bm
          destroy_buffer(buffer);
      }
  
@@ -545,7 +639,19 @@ index 043deab..1156b6e 100644
      assert(ceil(window->width * window->scale) == buffer->width);
      assert(ceil(window->height * window->scale) == buffer->height);
  
-@@ -332,6 +345,11 @@ layer_surface_closed(void *data, struct zwlr_layer_surface_v1 *layer_surface)
+@@ -285,6 +300,11 @@ bm_wl_window_render(struct window *window, struct wl_display *display, struct bm
+ 
+     wl_surface_damage_buffer(window->surface, 0, 0, buffer->width, buffer->height);
+     wl_surface_attach(window->surface, buffer->buffer, 0, 0);
++    /* while Spotlight animates, draw again on the next frame */
++    if (bm_spotlight() && bm_spot_animating && !window->frame_cb) {
++        window->frame_cb = wl_surface_frame(window->surface);
++        wl_callback_add_listener(window->frame_cb, &listener, window);
++    }
+     wl_surface_commit(window->surface);
+     buffer->busy = true;
+     window->render_pending = false;
+@@ -332,6 +352,11 @@ layer_surface_closed(void *data, struct zwlr_layer_surface_v1 *layer_surface)
  static uint32_t
  get_window_width(struct window *window)
  {
@@ -557,7 +663,7 @@ index 043deab..1156b6e 100644
      uint32_t width = window->width * ((window->width_factor != 0) ? window->width_factor : 1);
  
      if(width > window->width - 2 * window->hmargin_size)
-@@ -366,7 +384,7 @@ static const struct zwlr_layer_surface_v1_listener layer_surface_listener = {
+@@ -366,7 +391,7 @@ static const struct zwlr_layer_surface_v1_listener layer_surface_listener = {
  void
  bm_wl_window_set_width(struct window *window, struct wl_display *display, uint32_t margin, float factor)
  {
@@ -566,7 +672,7 @@ index 043deab..1156b6e 100644
          return;
  
      window->hmargin_size = margin;
-@@ -382,7 +400,7 @@ bm_wl_window_set_width(struct window *window, struct wl_display *display, uint32
+@@ -382,7 +407,7 @@ bm_wl_window_set_width(struct window *window, struct wl_display *display, uint32
  void
  bm_wl_window_set_align(struct window *window, struct wl_display *display, enum bm_align align)
  {
@@ -575,7 +681,7 @@ index 043deab..1156b6e 100644
          return;
  
      window->align = align;
-@@ -397,7 +415,7 @@ bm_wl_window_set_align(struct window *window, struct wl_display *display, enum b
+@@ -397,7 +422,7 @@ bm_wl_window_set_align(struct window *window, struct wl_display *display, enum b
  void
  bm_wl_window_set_y_offset(struct window *window, struct wl_display *display, int32_t y_offset)
  {
@@ -584,7 +690,7 @@ index 043deab..1156b6e 100644
          return;
  
      window->y_offset = y_offset;
-@@ -443,12 +461,21 @@ bm_wl_window_create(struct window *window, struct wl_display *display, struct wl
+@@ -443,12 +468,21 @@ bm_wl_window_create(struct window *window, struct wl_display *display, struct wl
      if (layer_shell && (window->layer_surface = zwlr_layer_shell_v1_get_layer_surface(layer_shell, surface, output, layer, "menu"))) {
          zwlr_layer_surface_v1_add_listener(window->layer_surface, &layer_surface_listener, window);
          window->align_anchor = get_align_anchor(window->align);

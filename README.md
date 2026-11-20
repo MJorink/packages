@@ -10,7 +10,7 @@ its desktop, as a Nix flake overlay (`overlays.default`). Used by
 | `dwl` | The previous desktop, kept as a fallback: dwl 0.9, `dwl/patches/*` (bar, fair layout, focusdir, dragswap, maximize, tagfollow, focusgeom, mirror, attachbottom, tooltips, scenefx, glass, gaps, bar height, animations, touch), `dwl/config.h`. No XWayland. |
 | `scenefx` | 0.5 with liquid glass blur nodes (rim refraction, dispersion, highlight). |
 | `slstatus` | slstatus 1.1, no X11, battery icons, tooltip components, `slstatus/config.h`. |
-| `bemenu` | nixpkgs, Wayland renderer only, Enter works in vim normal mode, drawn like macOS Spotlight (search pill, app icons, blue selection; on glasswm's glass). `BEMENU_SPOTLIGHT=0` restores its own look. |
+| `bemenu` | nixpkgs, Wayland renderer only, Enter works in vim normal mode, drawn like macOS Spotlight (search pill, app icons, blue selection; on glasswm's glass), with Spotlight's motion: the panel springs to fit the results, the selection glides. `BEMENU_SPOTLIGHT=0` restores its own look. |
 | `htop` | nixpkgs with vim keys (`hjkl`, `gG`, `^U^D^B^F`; kill is `x`, lsof `L`). |
 | `jetbrains-mono-nl-nerd-font` | 4 of the 96 font files (9 MiB). |
 | `inter-variable` | Inter (SF Pro stand-in), only the upright variable font (0.9 MiB). |
@@ -54,6 +54,7 @@ out of the patched dwl above and keeps its tiling and keys:
   the window along while the rest slides); layout moves use a spring. The
   genie draws the window as 48 strips, each squeezed onto a funnel towards the
   icon; the gap the window leaves in the layout closes when it has arrived.
+  Menus (bemenu as Spotlight) zoom in with their glass and fade out when they close.
 - **Wallpaper**: `wallpaper` in `config.h` (PNG/JPEG, scaled to cover), or a
   built-in gradient in macOS colours. No swaybg needed.
 - **Tiling**: mangowm's fair layout, vim keys: `MOD+hjkl` focus,

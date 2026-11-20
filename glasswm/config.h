@@ -70,6 +70,8 @@ static const int open_wait_ms              = 200; /* most a new window waits to 
 static const int close_ms                  = 160; /* closed windows shrink and fade out */
 static const int genie_ms                  = 520; /* minimize into the dock and back */
 static const int slide_ms                  = 420; /* switching tags slides like spaces */
+static const int menu_open_ms              = 300; /* bemenu (Spotlight) zooms in and fades in */
+static const int menu_close_ms             = 160; /* and fades out */
 /* blur behind translucent windows, the dock and popups. Set num_passes to 0 to disable it */
 static const struct blur_data blur_data    = { .num_passes = 3, .radius = 6, .noise = 0.02f,
                                                .brightness = 0.95f, .contrast = 0.95f, .saturation = 1.25f };

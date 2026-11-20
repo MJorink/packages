@@ -221,6 +221,7 @@ typedef struct {
 	struct wlr_scene_tree *popups;
 	struct wlr_scene_layer_surface_v1 *scene_layer;
 	struct wlr_scene_blur *blur; /* NULL on the background layer */
+	struct Anim *anim; /* anim.h: hidden while it draws the surface */
 	struct wl_list link;
 	int mapped;
 	struct wlr_layer_surface_v1 *layer_surface;
@@ -445,6 +446,7 @@ static void resizedir(const Arg *arg);
 static void roundbuffer(struct wlr_scene_buffer *buffer, int sx, int sy, void *data);
 static void roundlayer(struct wlr_scene_buffer *buffer, int sx, int sy, void *data);
 static int layerradius(LayerSurface *l);
+static int ismenu(LayerSurface *l);
 static struct wlr_scene_blur *glassbelow(struct wlr_scene_node *node);
 static void run(char *startup_cmd);
 static void setcursor(struct wl_listener *listener, void *data);
@@ -1187,6 +1189,7 @@ commitlayersurfacenotify(struct wl_listener *listener, void *data)
 	struct wlr_layer_surface_v1 *layer_surface = l->layer_surface;
 	struct wlr_scene_tree *scene_layer = layers[layermap[layer_surface->current.layer]];
 	struct wlr_layer_surface_v1_state old_state;
+	int appearing;
 
 	if (l->layer_surface->initial_commit) {
 		client_set_scale(layer_surface->surface, l->mon->wlr_output->scale);
@@ -1217,6 +1220,7 @@ commitlayersurfacenotify(struct wl_listener *listener, void *data)
 
 	if (layer_surface->current.committed == 0 && l->mapped == layer_surface->surface->mapped)
 		return;
+	appearing = !l->mapped && layer_surface->surface->mapped && ismenu(l);
 	l->mapped = layer_surface->surface->mapped;
 
 	if (scene_layer != l->scene->node.parent) {
@@ -1228,6 +1232,8 @@ commitlayersurfacenotify(struct wl_listener *listener, void *data)
 	}
 
 	arrangelayers(l->mon);
+	if (appearing)
+		animlayer(l, AnimOpen);
 }
 
 void
@@ -1691,6 +1697,8 @@ destroylayersurfacenotify(struct wl_listener *listener, void *data)
 {
 	LayerSurface *l = wl_container_of(listener, l, destroy);
 
+	if (l->anim)
+		animend(l->anim);
 	wl_list_remove(&l->link);
 	wl_list_remove(&l->destroy.link);
 	wl_list_remove(&l->unmap.link);
@@ -3603,6 +3611,13 @@ roundlayer(struct wlr_scene_buffer *buffer, int sx, int sy, void *data)
 
 /* Corner radius of the glass behind a layer surface: menus (bemenu, drawn
  * like Spotlight) have their own */
+/* Menus: layer surfaces named "menu" (bemenu, drawn like Spotlight) */
+int
+ismenu(LayerSurface *l)
+{
+	return l && l->layer_surface->namespace && !strcmp(l->layer_surface->namespace, "menu");
+}
+
 int
 layerradius(LayerSurface *l)
 {
@@ -4326,6 +4341,10 @@ unmaplayersurfacenotify(struct wl_listener *listener, void *data)
 {
 	LayerSurface *l = wl_container_of(listener, l, unmap);
 
+	if (l->anim)
+		animend(l->anim);
+	if (ismenu(l) && l->mapped)
+		animlayer(l, AnimClose);
 	l->mapped = 0;
 	wlr_scene_node_set_enabled(&l->scene->node, 0);
 	if (l == exclusive_focus)
