@@ -930,7 +930,10 @@ buttonpress(struct wl_listener *listener, void *data)
 		if (locked)
 			break;
 
-		if (!c && !exclusive_focus && (barpress(event->button) || dockpress(event->button)))
+		/* the dock is drawn over windows (not fullscreen ones), but xytonode
+		 * sees through it to the window below */
+		if (!exclusive_focus && ((!c && barpress(event->button))
+				|| ((!c || !c->isfullscreen) && dockpress(event->button))))
 			return;
 		keyboard = wlr_seat_get_keyboard(seat);
 		mods = keyboard ? wlr_keyboard_get_modifiers(keyboard) : 0;
