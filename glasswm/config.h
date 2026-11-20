@@ -31,8 +31,9 @@ static const float rootcolor[]             = COLOR(0x1e1e1eff);
 /* This conforms to the xdg-protocol. Set the alpha to zero to restore the old behavior */
 static const float fullscreen_bg[]         = {0.0f, 0.0f, 0.0f, 1.0f}; /* You can also use glsl colors */
 /* wallpaper (PNG or JPEG), scaled to cover each monitor. NULL draws a
- * macOS-like gradient. A background layer surface (swaybg) covers it. */
-static const char *wallpaper               = NULL;
+ * macOS-like gradient. A background layer surface (swaybg) covers it.
+ * This is the dotfiles' wallpaper, linked into $HOME by the NixOS config. */
+static const char *wallpaper               = "/home/jorink/.config/wallpaper.jpg";
 
 /* menu bar (macOS Tahoe: transparent over the wallpaper, white text with a
  * soft shadow). The logo opens logomenucmd, like the Apple menu. */

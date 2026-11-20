@@ -1409,7 +1409,9 @@ createlayersurface(struct wl_listener *listener, void *data)
 	l->popups = surface->data = wlr_scene_tree_create(layer_surface->current.layer
 			< ZWLR_LAYER_SHELL_V1_LAYER_TOP ? layers[LyrTop] : scene_layer);
 	l->scene->node.data = l->popups->node.data = l;
-	if (layer_surface->pending.layer != ZWLR_LAYER_SHELL_V1_LAYER_BACKGROUND) {
+	/* Glass only for Spotlight and notifications: other layer clients (slurp's
+	 * full-screen selection) must show the windows below them */
+	if (ismenu(l) || !strcmp(layer_surface->namespace, "notifications")) {
 		l->blur = wlr_scene_blur_create(l->scene, 0, 0);
 		wlr_scene_node_lower_to_bottom(&l->blur->node);
 		wlr_scene_blur_set_corner_radius(l->blur, layerradius(l));
