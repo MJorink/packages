@@ -444,6 +444,7 @@ static void resize(Client *c, struct wlr_box geo, int interact);
 static void resizedir(const Arg *arg);
 static void roundbuffer(struct wlr_scene_buffer *buffer, int sx, int sy, void *data);
 static void roundlayer(struct wlr_scene_buffer *buffer, int sx, int sy, void *data);
+static int layerradius(LayerSurface *l);
 static struct wlr_scene_blur *glassbelow(struct wlr_scene_node *node);
 static void run(char *startup_cmd);
 static void setcursor(struct wl_listener *listener, void *data);
@@ -1202,7 +1203,7 @@ commitlayersurfacenotify(struct wl_listener *listener, void *data)
 	if (l->blur) {
 		wlr_scene_blur_set_size(l->blur, layer_surface->surface->current.width,
 				layer_surface->surface->current.height);
-		wlr_scene_node_for_each_buffer(&l->scene->node, roundlayer, NULL);
+		wlr_scene_node_for_each_buffer(&l->scene->node, roundlayer, l);
 	}
 
 	if (layer_surface == exclusive_focus
@@ -1405,9 +1406,12 @@ createlayersurface(struct wl_listener *listener, void *data)
 	if (layer_surface->pending.layer != ZWLR_LAYER_SHELL_V1_LAYER_BACKGROUND) {
 		l->blur = wlr_scene_blur_create(l->scene, 0, 0);
 		wlr_scene_node_lower_to_bottom(&l->blur->node);
-		wlr_scene_blur_set_corner_radius(l->blur, corner_radius);
+		wlr_scene_blur_set_corner_radius(l->blur, layerradius(l));
 		wlr_scene_blur_set_glass(l->blur, 1);
-		wlr_scene_blur_set_should_only_blur_bottom_layer(l->blur, 1);
+		/* menus (Spotlight) blur the windows behind them, the rest only the
+		 * wallpaper: blurring glass again would make it almost invisible */
+		wlr_scene_blur_set_should_only_blur_bottom_layer(l->blur,
+				strcmp(layer_surface->namespace, "menu"));
 	}
 
 	wl_list_insert(&l->mon->layers[layer_surface->pending.layer],&l->link);
@@ -3594,7 +3598,15 @@ void
 roundlayer(struct wlr_scene_buffer *buffer, int sx, int sy, void *data)
 {
 	/* Match the rounded glass behind layer surfaces */
-	wlr_scene_buffer_set_corner_radii(buffer, corner_radii_all(corner_radius));
+	wlr_scene_buffer_set_corner_radii(buffer, corner_radii_all(layerradius(data)));
+}
+
+/* Corner radius of the glass behind a layer surface: menus (bemenu, drawn
+ * like Spotlight) have their own */
+int
+layerradius(LayerSurface *l)
+{
+	return l && !strcmp(l->layer_surface->namespace, "menu") ? menu_radius : corner_radius;
 }
 
 struct wlr_scene_blur *

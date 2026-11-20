@@ -1,0 +1,612 @@
+From 0b8e78ef5f353339dcd6e7bdc87072a4558ffab0 Mon Sep 17 00:00:00 2001
+From: jorink <maxjorink@gmail.com>
+Date: Fri, 20 Nov 2026 11:41:19 +0000
+Subject: [PATCH] spotlight: draw the menu like macOS Spotlight
+
+A search field in a glass pill with a magnifier and a placeholder, the
+results below it with the apps' icons (desktop entries, hicolor; PNG or
+SVG through nanosvg) and the highlighted one in a blue rounded row.
+680 px wide, centred a fifth of the way down. The compositor draws the
+glass behind the surface; this draws a light tint and a hairline rim.
+
+On by default; BEMENU_SPOTLIGHT=0 restores bemenu's own look. Needs
+nanosvg.h and nanosvgrast.h in lib/renderers/.
+---
+ GNUmakefile                     |   2 +-
+ client/common/common.c          |   5 +
+ lib/renderers/cairo_renderer.h  |   7 +
+ lib/renderers/spotlight.h       | 405 ++++++++++++++++++++++++++++++++
+ lib/renderers/wayland/nanosvg.c |   9 +
+ lib/renderers/wayland/wayland.h |   2 +
+ lib/renderers/wayland/window.c  |  35 ++-
+ 7 files changed, 460 insertions(+), 5 deletions(-)
+ create mode 100644 lib/renderers/spotlight.h
+ create mode 100644 lib/renderers/wayland/nanosvg.c
+
+diff --git a/GNUmakefile b/GNUmakefile
+index a1fc704..5ca20ba 100644
+--- a/GNUmakefile
++++ b/GNUmakefile
+@@ -111,7 +111,7 @@ viewporter.a: private override CPPFLAGS += $(shell $(PKG_CONFIG) --cflags-only-I
+ viewporter.a: lib/renderers/wayland/viewporter.c lib/renderers/wayland/viewporter.h
+ bemenu-renderer-wayland.so: private override LDLIBS += $(shell $(PKG_CONFIG) --libs wayland-client cairo pango pangocairo xkbcommon)
+ bemenu-renderer-wayland.so: private override CPPFLAGS += $(shell $(PKG_CONFIG) --cflags-only-I wayland-client cairo pango pangocairo xkbcommon)
+-bemenu-renderer-wayland.so: lib/renderers/cairo_renderer.h lib/renderers/wayland/wayland.c lib/renderers/wayland/wayland.h lib/renderers/wayland/registry.c lib/renderers/wayland/window.c xdg-shell.a wlr-layer-shell.a fractional-scale.a viewporter.a util.a
++bemenu-renderer-wayland.so: lib/renderers/cairo_renderer.h lib/renderers/spotlight.h lib/renderers/wayland/nanosvg.c lib/renderers/wayland/wayland.c lib/renderers/wayland/wayland.h lib/renderers/wayland/registry.c lib/renderers/wayland/window.c xdg-shell.a wlr-layer-shell.a fractional-scale.a viewporter.a util.a
+ 
+ common.a: client/common/common.c client/common/common.h
+ bemenu: common.a client/bemenu.c
+diff --git a/client/common/common.c b/client/common/common.c
+index 198cd05..d52c0fc 100644
+--- a/client/common/common.c
++++ b/client/common/common.c
+@@ -577,6 +577,11 @@ menu_with_options(struct client *client)
+     bm_menu_set_hpadding(menu, client->hpadding);
+     bm_menu_set_title(menu, client->title);
+     bm_menu_set_prefix(menu, client->prefix);
++    /* the Spotlight look (BEMENU_SPOTLIGHT, see lib/renderers/spotlight.h)
++     * searches like Spotlight: case-insensitively */
++    const char *spotlight = getenv("BEMENU_SPOTLIGHT");
++    if (!(spotlight && !strcmp(spotlight, "0")) && client->filter_mode == BM_FILTER_MODE_DMENU)
++        client->filter_mode = BM_FILTER_MODE_DMENU_CASE_INSENSITIVE;
+     bm_menu_set_filter_mode(menu, client->filter_mode);
+     bm_menu_set_lines(menu, client->lines);
+     bm_menu_set_lines_mode(menu, client->lines_mode);
+diff --git a/lib/renderers/cairo_renderer.h b/lib/renderers/cairo_renderer.h
+index f0543f5..3061322 100644
+--- a/lib/renderers/cairo_renderer.h
++++ b/lib/renderers/cairo_renderer.h
+@@ -279,11 +279,18 @@ bm_cairo_rounded_path(cairo_t *cr, double x, double y, double width, double heig
+ }
+ 
+ 
++#include "spotlight.h"
++
+ static inline void
+ bm_cairo_paint(struct cairo *cairo, uint32_t width, uint32_t max_height, struct bm_menu *menu, struct cairo_paint_result *out_result)
+ {
+     assert(cairo && menu && out_result);
+ 
++    if (bm_spotlight()) {
++        bm_spotlight_paint(cairo, width, max_height, menu, out_result);
++        return;
++    }
++
+     max_height /= cairo->scale;
+ 
+     memset(out_result, 0, sizeof(struct cairo_paint_result));
+diff --git a/lib/renderers/spotlight.h b/lib/renderers/spotlight.h
+new file mode 100644
+index 0000000..67f920b
+--- /dev/null
++++ b/lib/renderers/spotlight.h
+@@ -0,0 +1,405 @@
++/* spotlight.h: bemenu drawn like macOS Spotlight (Tahoe, dark).
++ *
++ * A search field in a glass pill: a magnifier, the typed text in a large
++ * font, the prompt (or "Spotlight Search") as a placeholder. Below it, the
++ * results with the apps' icons and the highlighted one in a blue rounded
++ * row. The window is 680 px wide, centred, a fifth of the way down (see
++ * window.c). The compositor draws the glass behind it; this draws a light
++ * tint over it, so --nb, --fn etc. don't apply here.
++ *
++ * On by default; BEMENU_SPOTLIGHT=0 restores bemenu's own look. */
++
++#ifndef _BM_SPOTLIGHT_H_
++#define _BM_SPOTLIGHT_H_
++
++#include <dirent.h>
++#include <stdlib.h>
++#include <strings.h>
++#include <unistd.h>
++#include "nanosvg.h"
++#include "nanosvgrast.h"
++
++#define SPOT_WIDTH 680
++#define SPOT_BAR 56      /* search field height */
++#define SPOT_ROW 36      /* result row height */
++#define SPOT_ICON 26
++#define SPOT_RADIUS 26
++#define SPOT_LINES 8     /* results shown without -l */
++
++static inline bool
++bm_spotlight(void)
++{
++    static int on = -1;
++    if (on < 0) {
++        const char *e = getenv("BEMENU_SPOTLIGHT");
++        on = !(e && !strcmp(e, "0"));
++    }
++    return on;
++}
++
++/* Apps from the desktop entries: Name=, Icon= and the file name, to find
++ * the icon of an item by its text */
++struct spot_app {
++    char *name, *icon, *id;
++    cairo_surface_t *img;
++    bool loaded;
++    struct spot_app *next;
++};
++
++static struct spot_app *spot_apps;
++static char spot_dirs[16][1024];
++static int spot_ndirs = -1;
++
++static inline void
++spot_adddir(const char *d)
++{
++    if (!d || !*d || spot_ndirs >= 16 || access(d, R_OK))
++        return;
++    for (int i = 0; i < spot_ndirs; i++)
++        if (!strcmp(spot_dirs[i], d))
++            return;
++    snprintf(spot_dirs[spot_ndirs++], sizeof(spot_dirs[0]), "%s", d);
++}
++
++static inline void
++spot_scan(void)
++{
++    char buf[1024], line[1024], *dirs, *d, *save = NULL;
++    const char *home = getenv("HOME"), *user = getenv("USER");
++
++    if (spot_ndirs >= 0)
++        return;
++    spot_ndirs = 0;
++    if (getenv("XDG_DATA_HOME"))
++        spot_adddir(getenv("XDG_DATA_HOME"));
++    else if (home && snprintf(buf, sizeof(buf), "%s/.local/share", home) > 0)
++        spot_adddir(buf);
++    dirs = strdup(getenv("XDG_DATA_DIRS") ? getenv("XDG_DATA_DIRS") : "/usr/local/share:/usr/share");
++    for (d = strtok_r(dirs, ":", &save); d; d = strtok_r(NULL, ":", &save))
++        spot_adddir(d);
++    free(dirs);
++    if (user && snprintf(buf, sizeof(buf), "/etc/profiles/per-user/%s/share", user) > 0)
++        spot_adddir(buf);
++    if (home && snprintf(buf, sizeof(buf), "%s/.nix-profile/share", home) > 0)
++        spot_adddir(buf);
++    spot_adddir("/run/current-system/sw/share");
++
++    for (int i = 0; i < spot_ndirs; i++) {
++        snprintf(buf, sizeof(buf), "%s/applications", spot_dirs[i]);
++        DIR *dir = opendir(buf);
++        struct dirent *e;
++        if (!dir)
++            continue;
++        while ((e = readdir(dir))) {
++            size_t n = strlen(e->d_name);
++            char name[256] = "", icon[512] = "";
++            bool main = false;
++            FILE *f;
++            if (n < 9 || strcmp(e->d_name + n - 8, ".desktop"))
++                continue;
++            snprintf(buf, sizeof(buf), "%s/applications/%s", spot_dirs[i], e->d_name);
++            if (!(f = fopen(buf, "r")))
++                continue;
++            while (fgets(line, sizeof(line), f)) {
++                line[strcspn(line, "\r\n")] = '\0';
++                if (line[0] == '[') {
++                    if (main)
++                        break;
++                    main = !strcmp(line, "[Desktop Entry]");
++                } else if (main && !strncmp(line, "Name=", 5)) {
++                    snprintf(name, sizeof(name), "%s", line + 5);
++                } else if (main && !strncmp(line, "Icon=", 5)) {
++                    snprintf(icon, sizeof(icon), "%s", line + 5);
++                }
++            }
++            fclose(f);
++            if (!icon[0])
++                continue;
++            struct spot_app *a = calloc(1, sizeof(*a));
++            a->name = strdup(name);
++            a->icon = strdup(icon);
++            a->id = strndup(e->d_name, n - 8);
++            a->next = spot_apps;
++            spot_apps = a;
++        }
++        closedir(dir);
++    }
++}
++
++/* An image file as a size x size cairo surface (PNG, or SVG via nanosvg) */
++static inline cairo_surface_t *
++spot_loadimg(const char *path, int size)
++{
++    size_t n = strlen(path);
++    cairo_surface_t *src, *dst;
++    cairo_t *cr;
++    double s;
++
++    if (n > 4 && !strcasecmp(path + n - 4, ".svg")) {
++        NSVGimage *svg = nsvgParseFromFile(path, "px", 96.0f);
++        NSVGrasterizer *rast;
++        if (!svg)
++            return NULL;
++        if (svg->width <= 0 || svg->height <= 0 || !(rast = nsvgCreateRasterizer())) {
++            nsvgDelete(svg);
++            return NULL;
++        }
++        float sc = (float)size / (svg->width > svg->height ? svg->width : svg->height);
++        dst = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, size, size);
++        cairo_surface_flush(dst);
++        unsigned char *px = cairo_image_surface_get_data(dst);
++        int stride = cairo_image_surface_get_stride(dst);
++        unsigned char *rgba = calloc((size_t)size * size, 4);
++        nsvgRasterize(rast, svg, 0, 0, sc, rgba, size, size, size * 4);
++        for (int y = 0; y < size; y++)
++            for (int x = 0; x < size; x++) {
++                unsigned char *p = rgba + (y * size + x) * 4;
++                uint32_t a = p[3];
++                ((uint32_t *)(px + y * stride))[x] = a << 24 | (p[0] * a / 255) << 16
++                    | (p[1] * a / 255) << 8 | (p[2] * a / 255);
++            }
++        cairo_surface_mark_dirty(dst);
++        free(rgba);
++        nsvgDeleteRasterizer(rast);
++        nsvgDelete(svg);
++        return dst;
++    }
++    src = cairo_image_surface_create_from_png(path);
++    if (cairo_surface_status(src) != CAIRO_STATUS_SUCCESS) {
++        cairo_surface_destroy(src);
++        return NULL;
++    }
++    dst = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, size, size);
++    cr = cairo_create(dst);
++    s = (double)size / fmax(cairo_image_surface_get_width(src), cairo_image_surface_get_height(src));
++    cairo_scale(cr, s, s);
++    cairo_set_source_surface(cr, src, 0, 0);
++    cairo_pattern_set_filter(cairo_get_source(cr), CAIRO_FILTER_GOOD);
++    cairo_paint(cr);
++    cairo_destroy(cr);
++    cairo_surface_destroy(src);
++    return dst;
++}
++
++static inline cairo_surface_t *
++spot_findicon(const char *icon, int size)
++{
++    static const char *sub[] = { "scalable/apps", "64x64/apps", "48x48/apps", "128x128/apps",
++        "256x256/apps", "96x96/apps", "32x32/apps", "512x512/apps" };
++    static const char *ext[] = { "svg", "png" };
++    char path[1024];
++    cairo_surface_t *img;
++
++    if (icon[0] == '/')
++        return spot_loadimg(icon, size);
++    for (int d = 0; d < spot_ndirs; d++)
++        for (size_t i = 0; i < sizeof(sub) / sizeof(sub[0]); i++)
++            for (int e = 0; e < 2; e++) {
++                snprintf(path, sizeof(path), "%s/icons/hicolor/%s/%s.%s", spot_dirs[d], sub[i], icon, ext[e]);
++                if (!access(path, R_OK) && (img = spot_loadimg(path, size)))
++                    return img;
++            }
++    for (int d = 0; d < spot_ndirs; d++)
++        for (int e = 0; e < 2; e++) {
++            snprintf(path, sizeof(path), "%s/pixmaps/%s.%s", spot_dirs[d], icon, ext[e]);
++            if (!access(path, R_OK) && (img = spot_loadimg(path, size)))
++                return img;
++        }
++    return NULL;
++}
++
++/* The icon of the app an item names (by Name=, desktop file or icon name) */
++static inline cairo_surface_t *
++spot_icon(const char *text, int size)
++{
++    struct spot_app *a;
++    spot_scan();
++    for (a = spot_apps; a; a = a->next) {
++        const char *dot = strrchr(a->id, '.');
++        if (!strcasecmp(a->name, text) || !strcasecmp(a->id, text) || !strcasecmp(a->icon, text)
++                || (dot && !strcasecmp(dot + 1, text)))
++            break;
++    }
++    if (!a)
++        return NULL;
++    if (!a->loaded) {
++        a->img = spot_findicon(a->icon, size);
++        a->loaded = true;
++    }
++    return a->img;
++}
++
++/* Spotlight's font (SF Pro there; Inter by default here, whatever --fn
++ * says, or $BEMENU_SPOTLIGHT_FONT), at a size in points */
++static inline void
++spot_font(const struct bm_menu *menu, double pt, bool bold, char *out, size_t n)
++{
++    (void)menu;
++    const char *family = getenv("BEMENU_SPOTLIGHT_FONT");
++    if (!family || !*family)
++        family = "Inter Variable";
++    snprintf(out, n, "%s%s %.1f", family, bold ? " Bold" : "", pt);
++}
++
++/* Draw text at x, centred in the row from y to y + h, at most w wide;
++ * returns its width */
++static inline int
++spot_text(struct cairo *cairo, const char *font, const char *text, double x, double y,
++        double h, double w, double r, double g, double b, double a)
++{
++    PangoLayout *layout = pango_cairo_create_layout(cairo->cr);
++    PangoFontDescription *desc = pango_font_description_from_string(font);
++    int tw, th;
++    pango_layout_set_font_description(layout, desc);
++    pango_font_description_free(desc);
++    pango_layout_set_text(layout, text, -1);
++    pango_layout_set_single_paragraph_mode(layout, true);
++    if (w > 0) {
++        pango_layout_set_width(layout, (int)(w * PANGO_SCALE));
++        pango_layout_set_ellipsize(layout, PANGO_ELLIPSIZE_END);
++    }
++    pango_layout_get_pixel_size(layout, &tw, &th);
++    cairo_set_source_rgba(cairo->cr, r, g, b, a);
++    cairo_move_to(cairo->cr, x, y + (h - th) / 2);
++    pango_cairo_show_layout(cairo->cr, layout);
++    g_object_unref(layout);
++    return tw;
++}
++
++static inline int
++spot_textwidth(struct cairo *cairo, const char *font, const char *text)
++{
++    PangoLayout *layout = pango_cairo_create_layout(cairo->cr);
++    PangoFontDescription *desc = pango_font_description_from_string(font);
++    int tw, th;
++    pango_layout_set_font_description(layout, desc);
++    pango_font_description_free(desc);
++    pango_layout_set_text(layout, text, -1);
++    pango_layout_get_pixel_size(layout, &tw, &th);
++    g_object_unref(layout);
++    return tw;
++}
++
++static inline void
++bm_spotlight_paint(struct cairo *cairo, uint32_t width, uint32_t max_height,
++        struct bm_menu *menu, struct cairo_paint_result *out)
++{
++    cairo_t *cr = cairo->cr;
++    double W = width / cairo->scale;
++    char big[128], row[128];
++    uint32_t count, lines = menu->lines ? menu->lines : SPOT_LINES;
++    struct bm_item **items = bm_menu_get_filtered_items(menu, &count);
++    struct bm_item *hl = bm_menu_get_highlighted_item(menu);
++    bool icons = false;
++
++    max_height /= cairo->scale;
++    if (SPOT_BAR + 16 + lines * SPOT_ROW > max_height)
++        lines = max_height > SPOT_BAR + 16 + SPOT_ROW ? (max_height - SPOT_BAR - 16) / SPOT_ROW : 1;
++    uint32_t page = (menu->index / lines) * lines;
++    uint32_t shown = count > page ? (count - page < lines ? count - page : lines) : 0;
++    double H = SPOT_BAR + (shown ? 1 + 8 + shown * SPOT_ROW + 8 : 0);
++
++    memset(out, 0, sizeof(*out));
++    spot_font(menu, 16.5, false, big, sizeof(big));
++    spot_font(menu, 11.5, false, row, sizeof(row));
++    cairo_set_antialias(cr, CAIRO_ANTIALIAS_DEFAULT);
++
++    cairo_save(cr);
++    cairo_set_operator(cr, CAIRO_OPERATOR_CLEAR);
++    cairo_paint(cr);
++    cairo_restore(cr);
++
++    /* the pane: a tint over the compositor's glass, and a hairline rim */
++    bm_cairo_rounded_path(cr, 0, 0, W, H, SPOT_RADIUS);
++    cairo_set_source_rgba(cr, 0.12, 0.12, 0.13, 0.42);
++    cairo_fill(cr);
++    bm_cairo_rounded_path(cr, 0.5, 0.5, W - 1, H - 1, SPOT_RADIUS - 0.5);
++    cairo_set_source_rgba(cr, 1, 1, 1, 0.16);
++    cairo_set_line_width(cr, 1);
++    cairo_stroke(cr);
++
++    /* magnifier */
++    cairo_set_source_rgba(cr, 1, 1, 1, 0.6);
++    cairo_set_line_width(cr, 2.2);
++    cairo_set_line_cap(cr, CAIRO_LINE_CAP_ROUND);
++    cairo_new_sub_path(cr);
++    cairo_arc(cr, 30, SPOT_BAR / 2.0 - 2, 7.5, 0, 2 * M_PI);
++    cairo_stroke(cr);
++    cairo_move_to(cr, 35.6, SPOT_BAR / 2.0 + 3.6);
++    cairo_line_to(cr, 41, SPOT_BAR / 2.0 + 9);
++    cairo_stroke(cr);
++
++    /* the search text with its caret, or the placeholder */
++    double tx = 56, tw = W - tx - 20;
++    const char *filter = menu->filter ? menu->filter : "";
++    if (menu->password == BM_PASSWORD_HIDE) {
++        filter = "";
++    } else if (menu->password == BM_PASSWORD_INDICATOR) {
++        static char stars[256];
++        size_t n = strlen(filter) < sizeof(stars) - 1 ? strlen(filter) : sizeof(stars) - 1;
++        memset(stars, '*', n);
++        stars[n] = '\0';
++        filter = stars;
++    }
++    if (!*filter)
++        spot_text(cairo, big, menu->title && *menu->title ? menu->title : "Spotlight Search",
++                tx, 0, SPOT_BAR, tw, 1, 1, 1, 0.38);
++    else
++        spot_text(cairo, big, filter, tx, 0, SPOT_BAR, tw, 1, 1, 1, 0.95);
++    {
++        char before[1024];
++        size_t c = menu->cursor < sizeof(before) - 1 ? menu->cursor : sizeof(before) - 1;
++        if (c > strlen(filter))
++            c = strlen(filter);
++        memcpy(before, filter, c);
++        before[c] = '\0';
++        double cx = tx + (c ? spot_textwidth(cairo, big, before) : 0) + 1;
++        cairo_set_source_rgba(cr, 0.04, 0.52, 1.0, 1);
++        cairo_rectangle(cr, cx, SPOT_BAR / 2.0 - 12, 2, 24);
++        cairo_fill(cr);
++    }
++
++    if (shown) {
++        cairo_set_source_rgba(cr, 1, 1, 1, 0.1);
++        cairo_rectangle(cr, 0, SPOT_BAR, W, 1);
++        cairo_fill(cr);
++
++        for (uint32_t i = 0; i < shown; i++)
++            if (spot_icon(items[page + i]->text ? items[page + i]->text : "", SPOT_ICON * cairo->scale))
++                icons = true;
++
++        double y = SPOT_BAR + 1 + 8;
++        for (uint32_t i = 0; i < shown; i++, y += SPOT_ROW) {
++            struct bm_item *it = items[page + i];
++            const char *text = it->text ? it->text : "";
++            bool h = it == hl, sel = bm_menu_item_is_selected(menu, it);
++            if (h || sel) {
++                bm_cairo_rounded_path(cr, 8, y, W - 16, SPOT_ROW, 9);
++                if (h)
++                    cairo_set_source_rgba(cr, 0.04, 0.52, 1.0, menu->event_feedback ? 0.6 : 1);
++                else
++                    cairo_set_source_rgba(cr, 1, 1, 1, 0.12);
++                cairo_fill(cr);
++            }
++            double x = 22;
++            if (icons) {
++                cairo_surface_t *img = spot_icon(text, SPOT_ICON * cairo->scale);
++                if (img) {
++                    cairo_save(cr);
++                    cairo_translate(cr, 20, y + (SPOT_ROW - SPOT_ICON) / 2.0);
++                    cairo_scale(cr, 1 / cairo->scale, 1 / cairo->scale);
++                    cairo_set_source_surface(cr, img, 0, 0);
++                    cairo_paint(cr);
++                    cairo_restore(cr);
++                }
++                x = 56;
++            }
++            spot_text(cairo, row, text, x, y, SPOT_ROW, W - x - 24, 1, 1, 1, h ? 1 : 0.88);
++        }
++    }
++
++    out->displayed = shown ? shown : 1;
++    out->height = (uint32_t)ceil(H * cairo->scale);
++}
++
++#endif /* _BM_SPOTLIGHT_H_ */
+diff --git a/lib/renderers/wayland/nanosvg.c b/lib/renderers/wayland/nanosvg.c
+new file mode 100644
+index 0000000..cab8a69
+--- /dev/null
++++ b/lib/renderers/wayland/nanosvg.c
+@@ -0,0 +1,9 @@
++/* nanosvg for the Spotlight look's SVG icons (spotlight.h) */
++#include <stdio.h>
++#include <string.h>
++#include <math.h>
++#include <stdlib.h>
++#define NANOSVG_IMPLEMENTATION
++#define NANOSVGRAST_IMPLEMENTATION
++#include "../nanosvg.h"
++#include "../nanosvgrast.h"
+diff --git a/lib/renderers/wayland/wayland.h b/lib/renderers/wayland/wayland.h
+index ef3859e..641cc55 100644
+--- a/lib/renderers/wayland/wayland.h
++++ b/lib/renderers/wayland/wayland.h
+@@ -124,6 +124,8 @@ struct window {
+     struct wl_shm *shm;
+     struct buffer buffers[2];
+     uint32_t width, height, max_height;
++    uint32_t spot_output_width; /* spotlight: the output's width */
++    int32_t spot_margin;        /* spotlight: distance from the top */
+     uint32_t hmargin_size;
+     float width_factor;
+     double scale;
+diff --git a/lib/renderers/wayland/window.c b/lib/renderers/wayland/window.c
+index 043deab..1156b6e 100644
+--- a/lib/renderers/wayland/window.c
++++ b/lib/renderers/wayland/window.c
+@@ -223,6 +223,10 @@ get_align_anchor(enum bm_align align)
+ {
+     uint32_t anchor = ZWLR_LAYER_SURFACE_V1_ANCHOR_LEFT | ZWLR_LAYER_SURFACE_V1_ANCHOR_RIGHT;
+ 
++    /* Spotlight: centred near the top, at its own width */
++    if (bm_spotlight())
++        return ZWLR_LAYER_SURFACE_V1_ANCHOR_TOP;
++
+     if(align == BM_ALIGN_TOP) {
+         anchor |= ZWLR_LAYER_SURFACE_V1_ANCHOR_TOP;
+     } else if(align == BM_ALIGN_CENTER) {
+@@ -273,6 +277,15 @@ bm_wl_window_render(struct window *window, struct wl_display *display, struct bm
+         destroy_buffer(buffer);
+     }
+ 
++    /* Spotlight sits a fifth of the way down the screen */
++    if (bm_spotlight()) {
++        int32_t margin = (int32_t)(window->max_height / window->scale * 0.2);
++        if (margin != window->spot_margin) {
++            window->spot_margin = margin;
++            zwlr_layer_surface_v1_set_margin(window->layer_surface, margin, 0, 0, 0);
++        }
++    }
++
+     assert(ceil(window->width * window->scale) == buffer->width);
+     assert(ceil(window->height * window->scale) == buffer->height);
+ 
+@@ -332,6 +345,11 @@ layer_surface_closed(void *data, struct zwlr_layer_surface_v1 *layer_surface)
+ static uint32_t
+ get_window_width(struct window *window)
+ {
++    if (bm_spotlight()) {
++        uint32_t ow = window->spot_output_width ? window->spot_output_width : window->width;
++        return (ow > SPOT_WIDTH + 32 || !ow) ? SPOT_WIDTH : ow - 32;
++    }
++
+     uint32_t width = window->width * ((window->width_factor != 0) ? window->width_factor : 1);
+ 
+     if(width > window->width - 2 * window->hmargin_size)
+@@ -366,7 +384,7 @@ static const struct zwlr_layer_surface_v1_listener layer_surface_listener = {
+ void
+ bm_wl_window_set_width(struct window *window, struct wl_display *display, uint32_t margin, float factor)
+ {
+-    if(window->hmargin_size == margin && window->width_factor == factor)
++    if(bm_spotlight() || (window->hmargin_size == margin && window->width_factor == factor))
+         return;
+ 
+     window->hmargin_size = margin;
+@@ -382,7 +400,7 @@ bm_wl_window_set_width(struct window *window, struct wl_display *display, uint32
+ void
+ bm_wl_window_set_align(struct window *window, struct wl_display *display, enum bm_align align)
+ {
+-    if(window->align == align)
++    if(bm_spotlight() || window->align == align)
+         return;
+ 
+     window->align = align;
+@@ -397,7 +415,7 @@ bm_wl_window_set_align(struct window *window, struct wl_display *display, enum b
+ void
+ bm_wl_window_set_y_offset(struct window *window, struct wl_display *display, int32_t y_offset)
+ {
+-    if(window->y_offset == y_offset)
++    if(bm_spotlight() || window->y_offset == y_offset)
+         return;
+ 
+     window->y_offset = y_offset;
+@@ -443,12 +461,21 @@ bm_wl_window_create(struct window *window, struct wl_display *display, struct wl
+     if (layer_shell && (window->layer_surface = zwlr_layer_shell_v1_get_layer_surface(layer_shell, surface, output, layer, "menu"))) {
+         zwlr_layer_surface_v1_add_listener(window->layer_surface, &layer_surface_listener, window);
+         window->align_anchor = get_align_anchor(window->align);
+-        zwlr_layer_surface_v1_set_anchor(window->layer_surface, window->align_anchor);
++        /* Spotlight learns the output's width from a full-width configure first */
++        zwlr_layer_surface_v1_set_anchor(window->layer_surface, bm_spotlight()
++                ? ZWLR_LAYER_SURFACE_V1_ANCHOR_TOP | ZWLR_LAYER_SURFACE_V1_ANCHOR_LEFT
++                    | ZWLR_LAYER_SURFACE_V1_ANCHOR_RIGHT
++                : window->align_anchor);
+         zwlr_layer_surface_v1_set_size(window->layer_surface, 0, 32);
+ 
+         wl_surface_commit(surface);
+         wl_display_roundtrip(display);
+ 
++        if (bm_spotlight()) {
++            window->spot_output_width = window->width;
++            zwlr_layer_surface_v1_set_anchor(window->layer_surface, window->align_anchor);
++        }
++
+         zwlr_layer_surface_v1_set_size(window->layer_surface, get_window_width(window), 32);
+     } else {
+         return false;
+-- 
+2.43.0
+

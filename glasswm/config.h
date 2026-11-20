@@ -55,6 +55,7 @@ static const uint32_t titlebar_text[2]     = { 0xffffff73, 0xffffffd9 }; /* unfo
 
 /* rounded corners, shadows and blur, see scenefx */
 static const int corner_radius             = 16; /* macOS Tahoe window corners, 0 disables them */
+static const int menu_radius               = 26; /* bemenu (Spotlight); layer surfaces named "menu" */
 static const int corner_radius_only_floating = 0; /* 1 means only floating windows have rounded corners */
 /* macOS shadows: the focused window's is large and dark, the others' lighter */
 static const int shadow_sigma              = 44; /* 0 disables shadows */
