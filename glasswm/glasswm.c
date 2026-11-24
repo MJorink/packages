@@ -1078,7 +1078,8 @@ cleanupmon(struct wl_listener *listener, void *data)
 	}
 
 	for (i = 0; i < LENGTH(m->pool); i++)
-		wlr_buffer_drop(&m->pool[i]->base);
+		if (m->pool[i])
+			wlr_buffer_drop(&m->pool[i]->base);
 
 	if (segmon == m) {
 		segmon = NULL;
@@ -3007,8 +3008,9 @@ motionnotify(uint32_t time, struct wlr_input_device *device, double dx, double d
 	} else if (cursor_mode == CurSwap) {
 		return;
 	} else if (cursor_mode == CurTileResize) {
-		/* Re-tile at most ~60 times per second while dragging */
-		if (time - lastresize >= 16) {
+		/* Re-tile at most ~60 times per second while dragging; not on the
+		 * internal time-0 call from arrange(), which would recurse */
+		if (time && time - lastresize >= 16) {
 			fairresize(grabc, (int)round(cursor->x) - grabcx,
 					(int)round(cursor->y) - grabcy);
 			lastresize = time;
