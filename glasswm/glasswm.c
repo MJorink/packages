@@ -1504,7 +1504,7 @@ createmon(struct wl_listener *listener, void *data)
 
 	m->wallpaper = wlr_scene_buffer_create(layers[LyrBg], NULL);
 	wlr_scene_node_lower_to_bottom(&m->wallpaper->node);
-	m->scene_buffer = wlr_scene_buffer_create(layers[LyrBottom], NULL);
+	m->scene_buffer = wlr_scene_buffer_create(layers[LyrTop], NULL); /* above windows, like the dock */
 	m->scene_buffer->point_accepts_input = baracceptsinput;
 	m->barblur = glassbelow(&m->scene_buffer->node);
 	updatebar(m);
@@ -1973,7 +1973,7 @@ barpress(uint32_t button)
 	Arg a;
 	int i, x;
 
-	if (!m || !(node = wlr_scene_node_at(&layers[LyrBottom]->node, cursor->x, cursor->y, NULL, NULL))
+	if (!m || !(node = wlr_scene_node_at(&layers[LyrTop]->node, cursor->x, cursor->y, NULL, NULL))
 			|| node != &m->scene_buffer->node)
 		return 0;
 	if (button != BTN_LEFT)
@@ -4575,7 +4575,9 @@ updatemons(struct wl_listener *listener, void *data)
 			wlr_session_lock_surface_v1_configure(m->lock_surface, m->m.width, m->m.height);
 		}
 
-		/* Calculate the effective monitor geometry to use for clients */
+		/* Calculate the effective monitor geometry to use for clients;
+		 * re-enable the bar first (hidden while the output was off) */
+		updatebar(m);
 		arrangelayers(m);
 		/* Don't move clients to the left output when plugging monitors */
 		arrange(m);
