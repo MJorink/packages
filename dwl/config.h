@@ -107,7 +107,6 @@ static const enum libinput_config_tap_button_map button_map = LIBINPUT_CONFIG_TA
 
 /* commands (scripts live in ~/.local/bin, see dotfiles/) */
 static const char *termcmd[]     = { "footclient", NULL };
-static const char *filescmd[]    = { "footclient", "nnn", NULL };
 static const char *upgradecmd[]  = { "footclient", "--hold", "up", NULL };
 static const char *browsercmd[]  = { "librewolf", NULL };
 static const char *appmenucmd[]  = { "menu-apps", NULL };
@@ -128,7 +127,6 @@ static const char *brdowncmd[]   = { "brightness", "down", NULL };
 static const Key keys[] = {
 	/* modifier       key                            function          argument */
 	{ MODKEY,         XKB_KEY_Return,                spawn,            {.v = termcmd} },
-	{ MODKEY,         XKB_KEY_e,                     spawn,            {.v = filescmd} },
 	{ MODKEY,         XKB_KEY_u,                     spawn,            {.v = upgradecmd} },
 	{ MODKEY,         XKB_KEY_b,                     spawn,            {.v = browsercmd} },
 	{ MODKEY,         XKB_KEY_space,                 spawn,            {.v = appmenucmd} },
